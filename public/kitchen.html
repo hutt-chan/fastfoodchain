@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KDS — Bếp · FastFood Chain</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div><h1>Kitchen Display System</h1><span class="tag" id="who"></span></div>
+  <div class="row-actions">
+    <button class="secondary" type="button" id="logoutBtn">Đăng xuất</button>
+    <a class="btn secondary" href="/" style="text-decoration:none">Trang chủ</a>
+  </div>
+</header>
+<div class="layout">
+  <div id="msg" aria-live="polite"></div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem">
+      <h2>👨‍🍳 Hàng đợi bếp</h2>
+      <div class="row-actions" id="adminBar" style="display:none;margin:0">
+        <label for="branchSel" style="margin:0">Chi nhánh</label>
+        <select id="branchSel" style="width:auto;min-width:180px"></select>
+      </div>
+      <small class="tag" id="lastUpdate"></small>
+    </div>
+    <p class="tag">Bắt đầu nấu → Hoàn thành → Đóng gói. Tự làm mới mỗi 10 giây.</p>
+    <div id="kpis" class="kpi-grid"></div>
+  </div>
+  <div class="grid grid-2">
+    <div class="card"><h3>1️⃣ Mới — chờ nấu</h3><div id="col1"></div></div>
+    <div class="card"><h3>2️⃣ Đang nấu</h3><div id="col2"></div></div>
+  </div>
+  <div class="card"><h3>3️⃣ Sẵn sàng đóng gói</h3><div id="col3"></div></div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+const u = requireLogin();
+if (u) document.getElementById('who').textContent = u.full_name + ' · ' + (u.role_code || u.role);
+document.getElementById('logoutBtn').onclick = logout;
+let adminBranch = null;
+let firstLoad = true;
+
+async function setupAdminBar() {
+  if (u.role_code !== 'ADMIN') return;
+  document.getElementById('adminBar').style.display = 'flex';
+  try {
+    const { branches } = await api('/branches');
+    const sel = document.getElementById('branchSel');
+    sel.innerHTML = branches.map(b => '<option value="' + b.id + '">' + escapeHtml(b.name) + '</option>').join('');
+    adminBranch = sel.value;
+    sel.onchange = () => { adminBranch = sel.value; load(); };
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+}
+function showMsg(html) {
+  document.getElementById('msg').innerHTML = html || '';
+  if (html) setTimeout(() => document.getElementById('msg').innerHTML = '', 5000);
+}
+
+function formatTime(dateString) {
+  if (!dateString) return '';
+  const d = new Date(dateString);
+  
+  // Hiển thị giờ phút (VD: 14:30)
+  return d.toLocaleTimeString('vi-VN', { 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
+  
+  /* Nếu bạn muốn hiển thị cả ngày tháng (VD: 14:30 07/05) thì dùng dòng dưới đây thay thế:
+  return d.toLocaleString('vi-VN', { 
+    hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' 
+  });
+  */
+}
+
+function renderCard(o, cls, btnLabel, action) {
+  // Render danh sách món ăn rõ ràng, có phân cách, highlight số lượng và ghi chú
+  const items = o.items || [];
+  const itemsHtml = items.map(i => `
+    <div style="display:flex; justify-content:space-between; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed #ccc;">
+      <div style="padding-right: 10px;">
+        <span style="font-weight: 500;">${escapeHtml(i.product_name)}</span>
+        ${i.note ? `<div style="color: #d9534f; font-size: 0.8rem; font-style: italic;">📝 ${escapeHtml(i.note)}</div>` : ''}
+      </div>
+      <strong style="font-size: 1.1rem; color: #0275d8;">x${i.quantity}</strong>
+    </div>
+  `).join('');
+
+  return '<div class="kds-card ' + cls + '"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem">' +
+    '<strong>' + escapeHtml(o.order_code) + '</strong>' +
+    '<small class="tag">🕒 ' + formatTime(o.kitchen_started_at || o.created_at) + '</small></div>' +
+    '<div style="margin:0.8rem 0;font-size:0.95rem; background: #f9f9f9; padding: 5px; border-radius: 4px;">' + 
+      (itemsHtml || '<em>Không có món</em>') + 
+    '</div>' +
+    '<div class="row-actions"><button data-act="' + o.id + ':' + action + '">' + btnLabel + '</button></div></div>';
+}
+
+async function load() {
+  try {
+    if (firstLoad) showLoading('Đang tải KDS...');
+    const q = adminBranch ? '?branch_id=' + adminBranch : '';
+    
+    // Chỉ cần gọi 1 API duy nhất, backend đã lo phần ghép items
+    const { orders } = await api('/kitchen/kds' + q);
+
+    const c1 = orders.filter(o => o.status === 'AWAITING_KITCHEN');
+    const c2 = orders.filter(o => o.status === 'COOKING');
+    const c3 = orders.filter(o => o.status === 'READY_PACKAGING');
+    
+    document.getElementById('kpis').innerHTML =
+      '<div class="kpi"><div class="l">Mới</div><div class="v">' + c1.length + '</div></div>' +
+      '<div class="kpi"><div class="l">Đang nấu</div><div class="v">' + c2.length + '</div></div>' +
+      '<div class="kpi"><div class="l">Chờ đóng gói</div><div class="v">' + c3.length + '</div></div>';
+      
+    const empty = '<p class="empty"><span class="icon">🍳</span>Trống</p>';
+    
+    // Gọi renderCard không cần truyền detailMap nữa, chỉ truyền `o`
+    document.getElementById('col1').innerHTML = c1.length ? c1.map(o => renderCard(o, '', '▶ Bắt đầu nấu', 'start')).join('') : empty;
+    document.getElementById('col2').innerHTML = c2.length ? c2.map(o => renderCard(o, 'cooking', '✓ Nấu xong', 'finish-cook')).join('') : empty;
+    document.getElementById('col3').innerHTML = c3.length ? c3.map(o => renderCard(o, 'ready', '📦 Đã đóng gói', 'package')).join('') : empty;
+
+    document.querySelectorAll('[data-act]').forEach(b => {
+      b.onclick = async () => {
+        const [id, act] = b.dataset.act.split(':');
+        b.disabled = true;
+        try {
+          await api('/kitchen/orders/' + id + '/' + act + (adminBranch ? '?branch_id=' + adminBranch : ''), { method:'POST', body:{} });
+          load();
+        } catch (e) { b.disabled = false; await alertModal(e.message); }
+      };
+    });
+    document.getElementById('lastUpdate').textContent = '⟳ Cập nhật ' + new Date().toLocaleTimeString('vi-VN');
+  } catch (e) {
+    document.getElementById('msg').innerHTML = '<div class="msg err">' + escapeHtml(e.message) + '</div>';
+  } finally {
+    if (firstLoad) { hideLoading(); firstLoad = false; }
+  }
+}
+
+(async () => {
+  await setupAdminBar();
+  load();
+  setInterval(load, 10000);
+})();
+</script>
+</body>
+</html>

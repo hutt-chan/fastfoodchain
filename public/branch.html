@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chi nhánh — FastFood Chain</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div><h1>Quản lý chi nhánh</h1><span class="tag" id="who"></span></div>
+  <div class="row-actions">
+    <button class="secondary" type="button" id="logoutBtn">Đăng xuất</button>
+    <a class="btn secondary" href="/" style="text-decoration:none">Trang chủ</a>
+  </div>
+</header>
+<div class="layout">
+  <div id="msg" aria-live="polite"></div>
+  <div class="card">
+    <h2>📊 Tổng quan hôm nay</h2>
+    <div id="kpis" class="kpi-grid"></div>
+  </div>
+  <div class="tabs">
+    <button class="active" data-tab="orders">📋 Đơn hàng</button>
+    <button data-tab="menu">🍽️ Thực đơn</button>
+    <button data-tab="inv">📦 Kho chi nhánh</button>
+    <button data-tab="req">📝 Phiếu xin hàng</button>
+    <button data-tab="rep">📊 Báo cáo</button>
+  </div>
+  <section id="tab-orders" class="tab-panel active">
+    <div class="card">
+      <h2>📋 Đơn của chi nhánh (UC-27 → UC-29, UC-36)</h2>
+      <div class="filter-bar">
+        <input id="orderSearch" placeholder="🔎 Tìm theo mã / khách" aria-label="Tìm đơn" />
+        <select id="orderStatus"><option value="">Tất cả trạng thái</option></select>
+      </div>
+      <div id="orders"></div>
+    </div>
+  </section>
+  <section id="tab-menu" class="tab-panel">
+    <div class="card">
+      <h2>🍽️ Thực đơn — Tắt/Bật món (UC-31)</h2>
+      <p class="tag">Khi tắt thủ công, món sẽ ẩn khỏi thực đơn của khách dù còn đủ nguyên liệu.</p>
+      <div class="filter-bar">
+        <input id="menuSearch" placeholder="🔎 Tìm món" aria-label="Tìm món" />
+      </div>
+      <div id="menu"></div>
+    </div>
+  </section>
+  <section id="tab-inv" class="tab-panel">
+    <div class="card">
+      <h2>📦 Tồn kho chi nhánh (UC-30)</h2>
+      <div class="filter-bar">
+        <input id="invSearch" placeholder="🔎 Tìm nguyên liệu" aria-label="Tìm nguyên liệu" />
+      </div>
+      <div id="inv"></div>
+    </div>
+  </section>
+  <section id="tab-req" class="tab-panel">
+    <div class="card">
+      <h2>📝 Tạo phiếu xin hàng kho tổng (UC-32)</h2>
+      <div id="reqLines"><p class="tag">Bấm "+ Dòng" để thêm nguyên liệu cần xin.</p></div>
+      <div class="row-actions">
+        <button type="button" class="secondary" id="addLine">+ Dòng</button>
+        <label style="display:flex;align-items:center;gap:0.4rem;margin:0">
+          <input type="checkbox" id="urgent" style="width:auto" /> Khẩn (cần duyệt thủ công)
+        </label>
+        <button type="button" id="submitReq">📤 Gửi yêu cầu</button>
+      </div>
+    </div>
+    <div class="card"><h2>Lịch sử phiếu xin hàng</h2><div id="reqHistory"></div></div>
+  </section>
+  <!-- <section id="tab-rep" class="tab-panel">
+    <div class="card">
+      <h2>📊 Báo cáo doanh thu (UC-30)</h2>
+      <div class="grid grid-2">
+        <div><label for="from">Từ ngày</label><input id="from" type="date" /></div>
+        <div><label for="to">Đến ngày</label><input id="to" type="date" /></div>
+      </div>
+      <div class="row-actions"><button type="button" id="loadRep">Tải báo cáo</button></div>
+      <div id="rep" class="kpi-grid" style="margin-top:1rem"></div>
+    </div>
+  </section> -->
+  <section id="tab-rep" class="tab-panel">
+    <div class="card">
+      <h2>📊 Báo cáo doanh thu</h2>
+      
+      <!-- Bộ chọn loại báo cáo -->
+      <div style="margin-bottom: 1rem; border-bottom: 1px solid #ddd; padding-bottom: 1rem;">
+        <label for="repType" style="font-weight: bold; margin-right: 0.5rem;">Chế độ xem:</label>
+        <select id="repType" onchange="toggleRepInputs()" style="width: auto;">
+          <option value="day">Theo ngày</option>
+          <option value="month">Theo tháng</option>
+          <option value="year">Theo năm</option>
+        </select>
+      </div>
+
+      <!-- Bộ lọc 1: Theo Ngày -->
+      <div id="filter-day" class="grid grid-2" style="background: #f9f9f9; padding: 1rem; border-radius: 8px;">
+        <div><label for="fromDay">Từ ngày</label><input id="fromDay" type="date" /></div>
+        <div><label for="toDay">Đến ngày</label><input id="toDay" type="date" /></div>
+      </div>
+
+      <!-- Bộ lọc 2: Theo Tháng -->
+      <div id="filter-month" class="grid grid-3" style="display: none; background: #f9f9f9; padding: 1rem; border-radius: 8px;">
+        <div>
+          <label>Năm</label>
+          <input id="monthYear" type="number" min="2020" max="2050" />
+        </div>
+        <div>
+          <label>Từ tháng</label>
+          <select id="fromMonth">
+            <option value="1">Tháng 1</option><option value="2">Tháng 2</option>
+            <option value="3">Tháng 3</option><option value="4">Tháng 4</option>
+            <option value="5">Tháng 5</option><option value="6">Tháng 6</option>
+            <option value="7">Tháng 7</option><option value="8">Tháng 8</option>
+            <option value="9">Tháng 9</option><option value="10">Tháng 10</option>
+            <option value="11">Tháng 11</option><option value="12">Tháng 12</option>
+          </select>
+        </div>
+        <div>
+          <label>Đến tháng</label>
+          <select id="toMonth">
+            <option value="1">Tháng 1</option><option value="2">Tháng 2</option>
+            <option value="3">Tháng 3</option><option value="4">Tháng 4</option>
+            <option value="5">Tháng 5</option><option value="6">Tháng 6</option>
+            <option value="7">Tháng 7</option><option value="8">Tháng 8</option>
+            <option value="9">Tháng 9</option><option value="10">Tháng 10</option>
+            <option value="11">Tháng 11</option><option value="12" selected>Tháng 12</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Bộ lọc 3: Theo Năm -->
+      <div id="filter-year" class="grid grid-2" style="display: none; background: #f9f9f9; padding: 1rem; border-radius: 8px;">
+        <div><label>Từ năm</label><input id="fromYear" type="number" min="2020" max="2050" /></div>
+        <div><label>Đến năm</label><input id="toYear" type="number" min="2020" max="2050" /></div>
+      </div>
+
+      <div class="row-actions" style="margin-top: 1rem;">
+        <button type="button" id="loadRep">Tải báo cáo</button>
+      </div>
+      
+      <!-- Nơi hiển thị dữ liệu -->
+      <div id="rep" class="kpi-grid" style="margin-top:1rem"></div>
+      <div id="repDetails" style="margin-top:2rem"></div>
+    </div>
+  </section>
+</div>
+<script src="/js/api.js"></script>
+<script>
+const u = requireLogin();
+if (u) document.getElementById('who').textContent = u.full_name + ' · ' + (u.role_code || u.role);
+document.getElementById('logoutBtn').onclick = logout;
+let ingredients = [], allOrders = [], allMenu = [], allInv = [];
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+    if (b.dataset.tab === 'inv') loadInv();
+    if (b.dataset.tab === 'req') loadReqHistory();
+    if (b.dataset.tab === 'menu') loadMenu();
+  };
+});
+function showMsg(html) {
+  document.getElementById('msg').innerHTML = html || '';
+  if (html) setTimeout(() => document.getElementById('msg').innerHTML = '', 5000);
+}
+
+function formatDateTime(dateString) {
+  if (!dateString) return '';
+  const d = new Date(dateString);
+  // Hiển thị giờ:phút ngày/tháng/năm (VD: 14:30 07/05/2024)
+  return d.toLocaleString('vi-VN', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+}
+
+async function loadDashboard() {
+  try {
+    const d = await api('/branch/dashboard');
+    const counts = {}; (d.status_counts || []).forEach(r => counts[r.status] = r.c);
+    document.getElementById('kpis').innerHTML =
+      '<div class="kpi"><div class="l">Chờ xác nhận</div><div class="v">' + d.pending_confirm + '</div></div>' +
+      '<div class="kpi"><div class="l">Đang nấu</div><div class="v">' + (counts['COOKING'] || 0) + '</div></div>' +
+      '<div class="kpi"><div class="l">Chờ shipper</div><div class="v">' + (counts['AWAITING_SHIPPER'] || 0) + '</div></div>' +
+      '<div class="kpi"><div class="l">Hoàn tất</div><div class="v">' + (counts['COMPLETED'] || 0) + '</div></div>' +
+      '<div class="kpi"><div class="l">Đang giao</div><div class="v">' + (counts['DELIVERING'] || 0) + '</div></div>' +
+      '<div class="kpi"><div class="l">Hủy</div><div class="v">' + (counts['CANCELLED'] || 0) + '</div></div>';
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+}
+function renderOrders() {
+  const search = document.getElementById('orderSearch').value.trim().toLowerCase();
+  const st = document.getElementById('orderStatus').value;
+  let list = allOrders;
+  if (search) list = list.filter(o => (o.order_code + ' ' + (o.customer_name || '')).toLowerCase().includes(search));
+  if (st) list = list.filter(o => o.status === st);
+  document.getElementById('orders').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Mã</th><th>Khách</th><th>Tổng</th><th>Trạng thái</th><th></th></tr></thead><tbody>' +
+      list.map(o => '<tr><td>' + o.id + '</td><td><strong>' + o.order_code + '</strong></td><td>' + escapeHtml(o.customer_name) + '</td><td>' + vnd(o.total) + '</td>' +
+        '<td><span class="badge ' + (o.status === 'COMPLETED' ? 'ok' : (o.status === 'CANCELLED' ? '' : 'warn')) + '">' + statusLabel(o.status) + '</span></td>' +
+        '<td>' +
+        (o.status === 'PENDING_BRANCH' ? '<button data-confirm="' + o.id + '" style="padding:0.25rem 0.55rem">✓ Xác nhận</button>' : '') +
+        (o.status === 'AWAITING_SHIPPER' ? '<button class="secondary" data-dispatch="' + o.id + '" style="padding:0.25rem 0.55rem">🚚 Gọi ship</button>' : '') +
+        ' <button class="secondary" onclick="viewBranchOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Xem</button></td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">📭</span>Không có đơn phù hợp</p>';
+  document.querySelectorAll('[data-confirm]').forEach(b => b.onclick = async () => {
+    if (!await confirmModal('Xác nhận đơn để chuyển sang bếp?')) return;
+    try { await api('/branch/orders/' + b.dataset.confirm + '/confirm', { method:'POST', body:{} }); loadOrders(); loadDashboard(); }
+    catch (e) { alertModal(e.message); }
+  });
+  document.querySelectorAll('[data-dispatch]').forEach(b => b.onclick = async () => {
+    if (!await confirmModal('Gọi đơn vị vận chuyển cho đơn này?')) return;
+    try { const r = await api('/branch/orders/' + b.dataset.dispatch + '/dispatch-delivery', { method:'POST', body:{} });
+      await alertModal('Đã gọi ĐVVC. Mã chuyến: ' + r.shipment_id); loadOrders(); loadDashboard(); }
+    catch (e) { alertModal(e.message); }
+  });
+}
+async function loadOrders() {
+  const { orders } = await api('/branch/orders');
+  allOrders = orders;
+  const sts = [...new Set(orders.map(o => o.status))];
+  const sel = document.getElementById('orderStatus');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Tất cả trạng thái</option>' + sts.map(s => '<option value="' + s + '"' + (s === cur ? ' selected' : '') + '>' + statusLabel(s) + '</option>').join('');
+  renderOrders();
+}
+['orderSearch','orderStatus'].forEach(id => document.getElementById(id).addEventListener('input', renderOrders));
+window.viewBranchOrder = async function(id) {
+  try {
+    const { order, items, history } = await api('/branch/orders/' + id);
+    const lines = items.map(i => '<tr><td>' + escapeHtml(i.product_name) + '</td><td>' + i.quantity + '</td><td>' + vnd(i.unit_price) + '</td></tr>').join('');
+    const hist = (history || []).map(h => '<li><small class="tag">🕒 ' + formatDateTime(h.created_at) + '</small> — <strong>' + statusLabel(h.status) + '</strong>' + (h.note ? ' · ' + escapeHtml(h.note) : '') + '</li>').join('');
+    showModal('<h3>Đơn ' + order.order_code + '</h3>' + renderStatusPipeline(order.status, order.payment_method) +
+      '<p class="tag">Khách: ' + escapeHtml(order.customer_name) + ' · ' + escapeHtml(order.customer_phone || '') + '</p>' +
+      '<p class="tag">Địa chỉ: ' + escapeHtml(order.delivery_address) + '</p>' +
+      '<h4>Món</h4><table><thead><tr><th>Tên</th><th>SL</th><th>Đơn giá</th></tr></thead><tbody>' + lines + '</tbody></table>' +
+      '<h4 style="margin-top:0.75rem">Lịch sử trạng thái</h4><ul style="font-size:0.85rem">' + hist + '</ul>' +
+      '<div class="row-actions" style="justify-content:flex-end"><button class="secondary" onclick="closeModal()">Đóng</button></div>');
+  } catch (e) { alertModal(e.message); }
+};
+function renderMenu() {
+  const search = document.getElementById('menuSearch').value.trim().toLowerCase();
+  const list = search ? allMenu.filter(m => m.name.toLowerCase().includes(search)) : allMenu;
+  document.getElementById('menu').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>Món</th><th>Hiện trạng</th><th>Lý do</th><th></th></tr></thead><tbody>' +
+      list.map(m => {
+        let badge;
+        if (m.manual_off) badge = '<span class="badge warn">Tắt tay</span>';
+        else if (m.auto_off) badge = '<span class="badge warn">Hết NL (tự tắt)</span>';
+        else if (m.is_available) badge = '<span class="badge ok">Đang bán</span>';
+        else badge = '<span class="badge">Tắt</span>';
+        return '<tr><td>' + escapeHtml(m.name) + '</td><td>' + badge + '</td><td>' + escapeHtml(m.manual_off_reason || '') + '</td>' +
+          '<td><button class="secondary" data-toggle="' + m.product_id + '" data-m="' + (m.manual_off ? 0 : 1) + '" style="padding:0.25rem 0.55rem">' + (m.manual_off ? 'Bật lại' : 'Tắt món') + '</button></td></tr>';
+      }).join('') + '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">🍽️</span>Không có món phù hợp</p>';
+  document.querySelectorAll('[data-toggle]').forEach(b => b.onclick = async () => {
+    const turnOff = !!Number(b.dataset.m);
+    let reason = null;
+    if (turnOff) {
+      reason = await promptModal({ title: 'Tắt món', label: 'Lý do tắt món', defaultValue: 'Sự cố vận hành' });
+      if (reason === null) return;
+    }
+    await api('/branch/menu/' + b.dataset.toggle, { method:'PATCH', body:{ manual_off: turnOff, manual_off_reason: reason } });
+    loadMenu();
+  });
+}
+async function loadMenu() {
+  const { items } = await api('/branch/menu');
+  allMenu = items;
+  renderMenu();
+}
+document.getElementById('menuSearch').addEventListener('input', renderMenu);
+function renderInv() {
+  const search = document.getElementById('invSearch').value.trim().toLowerCase();
+  const list = search ? allInv.filter(i => i.name.toLowerCase().includes(search)) : allInv;
+  document.getElementById('inv').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn</th><th>Đơn vị</th></tr></thead><tbody>' +
+      list.map(i => '<tr><td>' + escapeHtml(i.name) + '</td><td>' + Number(i.quantity).toLocaleString('vi-VN') + '</td><td>' + i.unit + '</td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">📦</span>Không có nguyên liệu phù hợp</p>';
+}
+async function loadInv() {
+  const { inventory } = await api('/branch/inventory');
+  allInv = inventory;
+  renderInv();
+}
+document.getElementById('invSearch').addEventListener('input', renderInv);
+function ingOpts() { return ingredients.map(i => '<option value="' + i.id + '">' + escapeHtml(i.name) + ' (' + i.unit + ')</option>').join(''); }
+document.getElementById('addLine').onclick = () => {
+  if (!ingredients.length) return alertModal('Đang tải nguyên liệu, vui lòng thử lại');
+  const el = document.getElementById('reqLines');
+  if (el.querySelector('p.tag')) el.innerHTML = '';
+  const div = document.createElement('div'); div.dataset.rl = 1; div.className = 'row-actions'; div.style.alignItems = 'flex-end';
+  div.innerHTML = '<div style="flex:1"><label>Nguyên liệu</label><select data-ing>' + ingOpts() + '</select></div>' +
+    '<div style="width:140px"><label>Số lượng</label><input type="number" data-qty value="100" min="1" /></div>' +
+    '<button class="secondary" type="button" onclick="this.parentElement.remove()" aria-label="Xóa dòng">✕</button>';
+  el.appendChild(div);
+};
+document.getElementById('submitReq').onclick = async () => {
+  const lines = [];
+  document.querySelectorAll('[data-rl]').forEach(d => {
+    const ing = Number(d.querySelector('[data-ing]').value);
+    const qty = Number(d.querySelector('[data-qty]').value);
+    if (ing && qty > 0) lines.push({ ingredient_id: ing, qty_requested: qty });
+  });
+  if (!lines.length) return alertModal('Cần ít nhất 1 dòng nguyên liệu');
+  if (!await confirmModal('Gửi phiếu xin hàng với ' + lines.length + ' dòng?')) return;
+  try {
+    const r = await api('/branch/stock-requests', { method:'POST', body:{ lines, is_urgent: document.getElementById('urgent').checked } });
+    await alertModal('Tạo phiếu #' + r.id + ' — trạng thái: ' + r.status);
+    document.getElementById('reqLines').innerHTML = '<p class="tag">Bấm "+ Dòng" để thêm nguyên liệu.</p>';
+    document.getElementById('urgent').checked = false;
+    loadReqHistory();
+  } catch (e) { alertModal(e.message); }
+};
+// --- THAY THẾ HÀM CŨ BẰNG ĐOẠN MÃ NÀY ---
+async function loadReqHistory() {
+  const { requests } = await api('/branch/stock-requests');
+  document.getElementById('reqHistory').innerHTML = requests.length
+    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Trạng thái</th><th>Khẩn</th><th>Ngày</th><th>Số dòng</th><th>Thao tác</th></tr></thead><tbody>' +
+      requests.map(r => `<tr>
+        <td>#${r.id}</td>
+        <td><span class="badge">${r.status}</span></td>
+        <td>${r.is_urgent ? '⚡' : ''}</td>
+        <td>${formatDateTime(r.created_at)}</td>
+        <td>${r.line_count}</td>
+        <td><button class="secondary" onclick="viewReqDetail(${r.id})" style="padding:0.25rem 0.55rem">Xem chi tiết</button></td>
+      </tr>`).join('') +
+      '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">📭</span>Chưa có phiếu nào</p>';
+}
+
+// Bổ sung hàm hiển thị Modal chi tiết phiếu xin hàng
+window.viewReqDetail = async function(id) {
+  try {
+    // Gọi API lấy chi tiết phiếu mà chúng ta vừa tạo ở Backend
+    const { request, lines } = await api('/branch/stock-requests/' + id);
+    
+    // Tạo danh sách nguyên liệu
+    const rows = lines.map(l => `<tr>
+      <td>${escapeHtml(l.ingredient_name)} (${l.unit})</td>
+      <td>${l.qty_requested}</td>
+      <td><strong>${l.qty_approved !== null ? l.qty_approved : '<span style="color:#888">Đang chờ</span>'}</strong></td>
+    </tr>`).join('');
+
+    // Hiển thị Modal
+    showModal(`<h3>Chi tiết phiếu xin hàng #${request.id} ${request.is_urgent ? ' — ⚡ KHẨN' : ''}</h3>
+      <div class="kpi-grid" style="margin-bottom:1rem">
+        <div class="kpi"><div class="l">Trạng thái</div><div class="v" style="font-size:1rem">${request.status}</div></div>
+        <div class="kpi"><div class="l">Ngày tạo</div><div class="v" style="font-size:1rem">${formatDateTime(request.created_at)}</div></div>
+      </div>
+      
+      ${request.reject_reason ? `<p class="msg err" style="margin-bottom:1rem"><strong>Lý do từ chối:</strong> ${escapeHtml(request.reject_reason)}</p>` : ''}
+      
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Nguyên liệu</th><th>Số lượng xin</th><th>Số lượng được duyệt</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
+        <button class="secondary" onclick="closeModal()">Đóng</button>
+      </div>`);
+  } catch (e) {
+    alertModal(e.message);
+  }
+};
+// ---------------------------------------
+
+document.getElementById('loadRep').onclick = async () => {
+  // --- KHỞI TẠO GIÁ TRỊ MẶC ĐỊNH CHO CÁC Ô NHẬP NĂM ---
+const currentYear = new Date().getFullYear();
+document.getElementById('monthYear').value = currentYear;
+document.getElementById('toYear').value = currentYear;
+document.getElementById('fromYear').value = currentYear - 2; // Mặc định hiển thị 3 năm gần nhất
+
+// Hàm ẩn/hiện form tùy theo loại báo cáo
+window.toggleRepInputs = function() {
+  const type = document.getElementById('repType').value;
+  // Dùng .style.display = '' (hoặc 'grid') để reset lại trạng thái hiển thị
+  document.getElementById('filter-day').style.display = type === 'day' ? '' : 'none';
+  document.getElementById('filter-month').style.display = type === 'month' ? '' : 'none';
+  document.getElementById('filter-year').style.display = type === 'year' ? '' : 'none';
+};
+
+// --- XỬ LÝ KHI BẤM NÚT TẢI BÁO CÁO ---
+document.getElementById('loadRep').onclick = async () => {
+  const type = document.getElementById('repType').value;
+  let from = '', to = '';
+
+  // 1. Dịch dữ liệu người dùng nhập thành định dạng YYYY-MM-DD
+  if (type === 'day') {
+    from = document.getElementById('fromDay').value;
+    to = document.getElementById('toDay').value;
+  } 
+  else if (type === 'month') {
+    const y = document.getElementById('monthYear').value;
+    const fm = document.getElementById('fromMonth').value;
+    const tm = document.getElementById('toMonth').value;
+    if (y && fm && tm) {
+      from = `${y}-${fm.padStart(2, '0')}-01`;
+      // Lấy ngày cuối cùng của tháng (mẹo: Date(year, month, 0) trả về ngày cuối của tháng đó)
+      const lastDay = new Date(y, tm, 0).getDate();
+      to = `${y}-${tm.padStart(2, '0')}-${lastDay}`;
+    }
+  } 
+  else if (type === 'year') {
+    const fy = document.getElementById('fromYear').value;
+    const ty = document.getElementById('toYear').value;
+    if (fy && ty) {
+      from = `${fy}-01-01`;
+      to = `${ty}-12-31`;
+    }
+  }
+
+  // 2. Gửi API
+  const q = [`type=${type}`];
+  if (from) q.push('from=' + from); 
+  if (to) q.push('to=' + to);
+  
+  try {
+      const r = await api('/branch/reports?' + q.join('&'));
+      
+      // Hiển thị Card Tổng quan
+      document.getElementById('rep').innerHTML =
+        '<div class="kpi"><div class="l">Tổng đơn hoàn tất</div><div class="v">' + r.summary.orders + '</div></div>' +
+        '<div class="kpi"><div class="l">Tổng doanh thu</div><div class="v">' + vnd(r.summary.revenue) + '</div></div>';
+
+      // Hiển thị Bảng Chi Tiết
+      let detailHtml = '<h3>Chi tiết theo thời gian</h3>';
+      if (r.details && r.details.length > 0) {
+          detailHtml += '<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Số lượng đơn</th><th>Doanh thu</th></tr></thead><tbody>';
+          detailHtml += r.details.map(d => {
+              // Format lại nhãn hiển thị cho đẹp
+              let label = d.label;
+              if (type === 'month') label = 'Tháng ' + label.split('-')[1] + '/' + label.split('-')[0];
+              if (type === 'year') label = 'Năm ' + label;
+              
+              return `<tr>
+                  <td><strong>${escapeHtml(label)}</strong></td>
+                  <td>${d.orders}</td>
+                  <td>${vnd(d.revenue)}</td>
+               </tr>`;
+          }).join('');
+          detailHtml += '</tbody></table></div>';
+      } else {
+          detailHtml += '<p class="empty"><span class="icon">📭</span>Không có dữ liệu trong khoảng thời gian này</p>';
+      }
+      document.getElementById('repDetails').innerHTML = detailHtml;
+
+  } catch (e) {
+      alertModal('Lỗi tải báo cáo: ' + e.message);
+  }
+};
+};
+
+async function init() {
+  try { const ing = await api('/branch/ingredients'); ingredients = ing.ingredients; } catch {}
+  loadDashboard(); loadOrders();
+}
+init();
+setInterval(loadDashboard, 20000);
+setInterval(() => { if (document.querySelector('#tab-orders.active')) loadOrders(); }, 15000);
+</script>
+</body>
+</html>

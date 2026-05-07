@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Đăng ký — FastFood Chain</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div><h1>Đăng ký khách hàng</h1><span class="tag">Tạo tài khoản chỉ trong 30 giây</span></div>
+  <a href="/">Về trang chủ</a>
+</header>
+<div class="layout">
+  <div class="card login-box">
+    <h2>Tài khoản mới</h2>
+    <div id="msg" aria-live="polite"></div>
+    <form id="regForm" novalidate autocomplete="on">
+      <label for="full_name">Họ và tên *</label>
+      <input id="full_name" name="full_name" autocomplete="name" required />
+
+      <label for="phone">Số điện thoại *</label>
+      <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="09xxxxxxxx" required pattern="[0-9]{9,11}" />
+
+      <label for="email">Email (tùy chọn)</label>
+      <input id="email" name="email" type="email" autocomplete="email" />
+
+      <label for="password">Mật khẩu (≥ 8 ký tự) *</label>
+      <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required />
+
+      <label for="password2">Nhập lại mật khẩu *</label>
+      <input id="password2" name="password2" type="password" minlength="8" autocomplete="new-password" required />
+
+      <!-- <label for="addr">Địa chỉ giao mặc định</label> -->
+      <!-- <input id="addr" name="addr" autocomplete="street-address" /> -->
+
+      <div class="row-actions" style="margin-top:1rem;justify-content:space-between">
+        <a class="btn secondary" href="/" style="text-decoration:none">Đã có tài khoản? Đăng nhập</a>
+        <button type="submit" id="btn">Đăng ký</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+const form = document.getElementById('regForm');
+const msg = document.getElementById('msg');
+
+function err(t) { msg.innerHTML = '<div class="msg err">' + escapeHtml(t) + '</div>'; }
+function ok(t) { msg.innerHTML = '<div class="msg ok">' + escapeHtml(t) + '</div>'; }
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  msg.innerHTML = '';
+  
+  const full_name = document.getElementById('full_name').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const email = document.getElementById('email').value.trim() || null;
+  const password = document.getElementById('password').value;
+  const password2 = document.getElementById('password2').value;
+
+  // Đã xóa dòng: const addr = document.getElementById('addr').value...
+
+  if (!full_name) return err('Vui lòng nhập họ tên');
+  if (!/^\d{9,11}$/.test(phone)) return err('Số điện thoại không hợp lệ (9–11 chữ số)');
+  if (password.length < 8) return err('Mật khẩu phải có ít nhất 8 ký tự');
+  if (password !== password2) return err('Hai lần nhập mật khẩu không khớp');
+  
+  const btn = document.getElementById('btn');
+  btn.disabled = true; 
+  const oldText = btn.textContent; 
+  btn.textContent = 'Đang đăng ký...';
+  
+  try {
+    // Đã bỏ trường default_address ra khỏi body
+    const data = await api('/auth/register', { 
+      method: 'POST', 
+      body: { full_name, phone, email, password } 
+    });
+    
+    setToken(data.token); 
+    setUser(data.user);
+    ok('✓ Đăng ký thành công, đang chuyển hướng...');
+    setTimeout(() => location.href = '/customer.html', 400);
+  } catch (e2) { 
+    err(e2.message); 
+  } finally { 
+    btn.disabled = false; 
+    btn.textContent = oldText; 
+  }
+});
+</script>
+</body>
+</html>

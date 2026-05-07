@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quản lý chuỗi — FastFood Chain</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div><h1>Quản lý chuỗi</h1><span class="tag" id="who"></span></div>
+  <div class="row-actions">
+    <button class="secondary" type="button" id="logoutBtn">Đăng xuất</button>
+    <a class="btn secondary" href="/" style="text-decoration:none">Trang chủ</a>
+  </div>
+</header>
+<div class="layout">
+  <div id="msg" aria-live="polite"></div>
+  <div class="tabs">
+    <button class="active" data-tab="prod">🍔 Sản phẩm &amp; BOM</button>
+    <button data-tab="cat">🗂️ Danh mục</button>
+    <button data-tab="ing">🥬 Nguyên liệu</button>
+    <button data-tab="vou">🎟️ Voucher</button>
+    <button data-tab="rep">📊 Báo cáo</button>
+  </div>
+  <section id="tab-prod" class="tab-panel active">
+    <div class="card">
+      <h2>🍔 Sản phẩm</h2>
+      <div class="filter-bar">
+        <input id="prodSearch" placeholder="🔎 Tìm sản phẩm" />
+        <select id="prodCat"><option value="">Tất cả danh mục</option></select>
+      </div>
+      <div id="products"></div>
+    </div>
+    <div class="card">
+      <h3>+ Thêm sản phẩm mới (UC-15)</h3>
+      <div class="grid grid-2">
+        <div><label for="np_cat">Danh mục</label><select id="np_cat"></select></div>
+        <div><label for="np_name">Tên</label><input id="np_name" /></div>
+        <div><label for="np_price">Giá cơ bản</label><input id="np_price" type="number" min="0" /></div>
+        <div><label for="np_prep">Thời gian chế biến (phút)</label><input id="np_prep" type="number" value="15" min="1" /></div>
+      </div>
+      <label for="np_desc">Mô tả</label><textarea id="np_desc" rows="2"></textarea>
+      <label for="np_img">Ảnh URL (tùy chọn)</label><input id="np_img" type="url" />
+      <div class="row-actions"><button id="addProd">Tạo sản phẩm</button></div>
+    </div>
+    <div class="card">
+      <h3>📦 BOM theo sản phẩm (UC-16)</h3>
+      <label for="bom_pid">Chọn sản phẩm</label>
+      <select id="bom_pid"></select>
+      <div id="bom"></div>
+      <div class="row-actions">
+        <button class="secondary" type="button" id="addBomLine">+ Thêm dòng</button>
+        <button type="button" id="saveBom">💾 Lưu BOM</button>
+      </div>
+    </div>
+  </section>
+  <section id="tab-cat" class="tab-panel">
+    <div class="card">
+      <h2>🗂️ Danh mục</h2>
+      <div id="cats"></div>
+      <h3>+ Thêm danh mục</h3>
+      <div class="grid grid-2">
+        <div><label for="nc_name">Tên</label><input id="nc_name" /></div>
+        <div><label for="nc_sort">Thứ tự</label><input id="nc_sort" type="number" value="10" /></div>
+      </div>
+      <div class="row-actions"><button id="addCat">Tạo</button></div>
+    </div>
+  </section>
+  <section id="tab-ing" class="tab-panel">
+    <div class="card">
+      <h2>🥬 Nguyên liệu</h2>
+      <div class="filter-bar"><input id="ingSearch" placeholder="🔎 Tìm nguyên liệu" /></div>
+      <div id="ings"></div>
+      <h3>+ Thêm nguyên liệu</h3>
+      <div class="grid grid-2">
+        <div><label for="ni_name">Tên</label><input id="ni_name" /></div>
+        <div><label for="ni_unit">Đơn vị</label><input id="ni_unit" placeholder="g / ml / cái" /></div>
+        <div><label for="ni_cost">Đơn giá</label><input id="ni_cost" type="number" value="0" /></div>
+        <div><label for="ni_min">Tồn an toàn</label><input id="ni_min" type="number" value="0" /></div>
+        <div><label for="ni_reord">Điểm đặt hàng (UC-39)</label><input id="ni_reord" type="number" value="0" /></div>
+      </div>
+      <div class="row-actions"><button id="addIng">Tạo nguyên liệu</button></div>
+    </div>
+  </section>
+  <section id="tab-vou" class="tab-panel">
+    <div class="card">
+      <h2>🎟️ Voucher (UC-19)</h2>
+      <div id="vouchers"></div>
+      <h3>+ Thêm voucher</h3>
+      <div class="grid grid-2">
+        <div><label for="nv_code">Mã</label><input id="nv_code" placeholder="WELCOME10" /></div>
+        <div><label for="nv_type">Loại</label><select id="nv_type"><option value="PERCENT">Phần trăm</option><option value="FIXED">Số tiền</option></select></div>
+        <div><label for="nv_val">Giá trị</label><input id="nv_val" type="number" /></div>
+        <div><label for="nv_min">Đơn tối thiểu</label><input id="nv_min" type="number" value="0" /></div>
+        <div><label for="nv_max">Số lần dùng tối đa</label><input id="nv_max" type="number" value="100" /></div>
+        <div><label for="nv_branch">Chi nhánh</label><select id="nv_branch"><option value="">— Toàn chuỗi —</option></select></div>
+        <div><label for="nv_from">Hiệu lực từ</label><input id="nv_from" type="date" /></div>
+        <div><label for="nv_to">Đến</label><input id="nv_to" type="date" /></div>
+      </div>
+      <div class="row-actions"><button id="addVou">Tạo voucher</button></div>
+    </div>
+  </section>
+  <section id="tab-rep" class="tab-panel">
+    <div class="card">
+      <h2>📊 Báo cáo tổng & Chi nhánh (UC-17)</h2>
+      
+      <div class="grid grid-2" style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
+        <div>
+          <label for="repBranch">Chi nhánh</label>
+          <select id="repBranch"><option value="all">— Toàn chuỗi —</option></select>
+        </div>
+        <div>
+          <label for="repType">Chế độ xem</label>
+          <select id="repType" onchange="toggleRepInputs()">
+            <option value="day">Theo ngày</option>
+            <option value="month">Theo tháng</option>
+            <option value="year">Theo năm</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="filter-day" class="grid grid-2" style="background: #f9f9f9; padding: 1rem; border-radius: 8px;">
+        <div><label for="r_fromDay">Từ ngày</label><input id="r_fromDay" type="date" /></div>
+        <div><label for="r_toDay">Đến ngày</label><input id="r_toDay" type="date" /></div>
+      </div>
+
+      <div id="filter-month" class="grid grid-3" style="display: none; background: #f9f9f9; padding: 1rem; border-radius: 8px;">
+        <div><label>Năm</label><input id="r_monthYear" type="number" min="2020" max="2050" /></div>
+        <div>
+          <label>Từ tháng</label>
+          <select id="r_fromMonth">
+            <option value="1">Tháng 1</option><option value="2">Tháng 2</option><option value="3">Tháng 3</option>
+            <option value="4">Tháng 4</option><option value="5">Tháng 5</option><option value="6">Tháng 6</option>
+            <option value="7">Tháng 7</option><option value="8">Tháng 8</option><option value="9">Tháng 9</option>
+            <option value="10">Tháng 10</option><option value="11">Tháng 11</option><option value="12">Tháng 12</option>
+          </select>
+        </div>
+        <div>
+          <label>Đến tháng</label>
+          <select id="r_toMonth">
+            <option value="1">Tháng 1</option><option value="2">Tháng 2</option><option value="3">Tháng 3</option>
+            <option value="4">Tháng 4</option><option value="5">Tháng 5</option><option value="6">Tháng 6</option>
+            <option value="7">Tháng 7</option><option value="8">Tháng 8</option><option value="9">Tháng 9</option>
+            <option value="10">Tháng 10</option><option value="11">Tháng 11</option><option value="12" selected>Tháng 12</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="filter-year" class="grid grid-2" style="display: none; background: #f9f9f9; padding: 1rem; border-radius: 8px;">
+        <div><label>Từ năm</label><input id="r_fromYear" type="number" min="2020" max="2050" /></div>
+        <div><label>Đến năm</label><input id="r_toYear" type="number" min="2020" max="2050" /></div>
+      </div>
+
+      <div class="row-actions" style="margin-top: 1rem;"><button id="loadRep">Tải báo cáo</button></div>
+      
+      <div id="repBox" class="kpi-grid" style="margin-top:1.5rem"></div>
+      
+      <div id="repDetails" style="margin-top:2rem"></div>
+
+      <h3 style="margin-top: 2rem;">Top sản phẩm bán chạy</h3>
+      <div id="repTop"></div>
+    </div>
+  </section>
+</div>
+<script src="/js/api.js"></script>
+<script>
+const u = requireLogin();
+if (u) document.getElementById('who').textContent = u.full_name + ' · ' + (u.role_code || u.role);
+document.getElementById('logoutBtn').onclick = logout;
+let cats = [], ings = [], branches = [], allProducts = [];
+
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+  };
+});
+
+function showMsg(html) {
+  document.getElementById('msg').innerHTML = html || '';
+  if (html) setTimeout(() => document.getElementById('msg').innerHTML = '', 5000);
+}
+
+// --- 1. LOADERS ---
+async function loadCats() {
+  const r = await api('/chain/categories');
+  cats = r.categories;
+  document.getElementById('cats').innerHTML = '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Tên</th><th>Sắp xếp</th><th></th></tr></thead><tbody>' +
+    cats.map(c => `<tr>
+      <td>${c.id}</td>
+      <td><strong>${escapeHtml(c.name)}</strong></td>
+      <td>${c.sort_order}</td>
+      <td>
+        <button class="secondary" onclick="editCat(${c.id})" style="padding:0.2rem 0.5rem">✏️</button>
+        <button class="secondary" onclick="deleteCat(${c.id})" style="padding:0.2rem 0.5rem">🗑️</button>
+      </td>
+    </tr>`).join('') + '</tbody></table></div>';
+  document.getElementById('np_cat').innerHTML = cats.map(c => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join('');
+  document.getElementById('prodCat').innerHTML = '<option value="">Tất cả danh mục</option>' + cats.map(c => '<option value="' + escapeHtml(c.name) + '">' + escapeHtml(c.name) + '</option>').join('');
+}
+
+function renderProducts() {
+  const search = document.getElementById('prodSearch').value.trim().toLowerCase();
+  const cat = document.getElementById('prodCat').value;
+  let list = allProducts;
+  if (search) list = list.filter(p => p.name.toLowerCase().includes(search));
+  if (cat) list = list.filter(p => p.category_name === cat);
+  document.getElementById('products').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>Ảnh</th><th>ID</th><th>Tên</th><th>Danh mục</th><th>Giá</th><th>Bán</th><th></th></tr></thead><tbody>' +
+      list.map(p => '<tr>' +
+        '<td>' + (p.image_url
+          ? '<img src="' + escapeHtml(p.image_url) + '" alt="" style="width:54px;height:42px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" />'
+          : '<span style="font-size:1.6rem">🍴</span>') + '</td>' +
+        '<td>' + p.id + '</td><td>' + escapeHtml(p.name) + '</td><td>' + escapeHtml(p.category_name) + '</td><td>' + vnd(p.base_price) + '</td>' +
+        '<td>' + (p.is_active_chain ? '<span class="badge ok">Đang bán</span>' : '<span class="badge">Ngừng</span>') + '</td>' +
+        '<td><button class="secondary" data-edit="' + p.id + '" style="padding:0.25rem 0.55rem">✏️ Sửa</button>' +
+        '<button class="secondary" data-toggle="' + p.id + '" data-a="' + (p.is_active_chain ? 0 : 1) + '" style="padding:0.25rem 0.55rem">' + (p.is_active_chain ? 'Ngừng' : 'Bán lại') + '</button></td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">🔍</span>Không có sản phẩm phù hợp</p>';
+  document.getElementById('bom_pid').innerHTML = allProducts.map(p => '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>').join('');
+  document.querySelectorAll('[data-toggle]').forEach(b => b.onclick = async () => {
+    const turnOff = !Number(b.dataset.a);
+    if (!await confirmModal((turnOff ? 'Ngừng bán' : 'Bán lại') + ' sản phẩm này?', { danger: turnOff })) return;
+    await api('/chain/products/' + b.dataset.toggle, { method:'PATCH', body:{ is_active_chain: !!Number(b.dataset.a) } });
+    loadProducts();
+  });
+  document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => editProduct(b.dataset.edit));
+}
+
+async function editProduct(id) {
+  const { product } = await api('/chain/products/' + id);
+  showModal('<h3>✏️ Sửa sản phẩm #' + product.id + '</h3>' +
+    '<label for="ep_name">Tên</label><input id="ep_name" value="' + escapeHtml(product.name) + '" />' +
+    '<label for="ep_desc">Mô tả</label><textarea id="ep_desc" rows="2">' + escapeHtml(product.description || '') + '</textarea>' +
+    '<div class="grid grid-2"><div><label for="ep_price">Giá cơ bản</label><input id="ep_price" type="number" value="' + product.base_price + '" /></div>' +
+    '<div><label for="ep_prep">Thời gian chế biến</label><input id="ep_prep" type="number" value="' + product.prep_time_minutes + '" /></div></div>' +
+    '<label for="ep_img">Ảnh URL</label><input id="ep_img" type="url" value="' + escapeHtml(product.image_url || '') + '" />' +
+    '<div class="row-actions" style="margin-top:1rem;justify-content:flex-end">' +
+    '<button class="secondary" onclick="closeModal()">Hủy</button>' +
+    '<button onclick="saveProduct(' + product.id + ')">💾 Lưu</button></div>');
+}
+
+window.saveProduct = async function(id) {
+  const price = Number(document.getElementById('ep_price').value);
+  const prep = Number(document.getElementById('ep_prep').value);
+  if (price <= 0) return alertModal('Giá cơ bản phải lớn hơn 0');
+  if (prep <= 0) return alertModal('Thời gian chế biến phải lớn hơn 0');
+  try {
+    await api('/chain/products/' + id, { method:'PATCH', body:{
+      name: document.getElementById('ep_name').value,
+      description: document.getElementById('ep_desc').value,
+      base_price: price,
+      prep_time_minutes: prep,
+      image_url: document.getElementById('ep_img').value || null,
+    }});
+    closeModal(); showMsg('<div class="msg ok">✓ Đã lưu</div>'); loadProducts();
+  } catch (e) { alertModal(e.message); }
+};
+
+async function loadProducts() {
+  const r = await api('/chain/products');
+  allProducts = r.products;
+  renderProducts();
+}
+['prodSearch','prodCat'].forEach(id => document.getElementById(id).addEventListener('input', renderProducts));
+
+function renderIngs() {
+  const search = document.getElementById('ingSearch').value.trim().toLowerCase();
+  const list = search ? ings.filter(i => i.name.toLowerCase().includes(search)) : ings;
+  document.getElementById('ings').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Tên</th><th>ĐV</th><th>Giá</th><th>Tồn AT</th><th></th></tr></thead><tbody>' +
+      list.map(i => `<tr>
+        <td>${i.id}</td>
+        <td><strong>${escapeHtml(i.name)}</strong></td>
+        <td>${i.unit}</td>
+        <td>${vnd(i.unit_cost)}</td>
+        <td>${Number(i.safety_stock_min)}</td>
+        <td>
+          <button class="secondary" onclick="editIng(${i.id})" style="padding:0.2rem 0.5rem">✏️</button>
+          <button class="secondary" onclick="deleteIng(${i.id})" style="padding:0.2rem 0.5rem">🗑️</button>
+        </td>
+      </tr>`).join('') + '</tbody></table></div>'
+    : '<p class="empty">Không có nguyên liệu phù hợp</p>';
+}
+
+async function loadIngs() {
+  const r = await api('/chain/ingredients');
+  ings = r.ingredients;
+  renderIngs();
+}
+document.getElementById('ingSearch').addEventListener('input', renderIngs);
+
+async function loadVouchers() {
+  const r = await api('/chain/vouchers');
+  
+  // Hàm phụ để định dạng ngày thành DD/MM/YYYY
+  const fmt = (isoStr) => {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    return d.toLocaleDateString('vi-VN'); // Trả về định dạng 06/05/2026
+  };
+
+  document.getElementById('vouchers').innerHTML = r.vouchers.length
+    ? '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Loại</th><th>Giá trị</th><th>Tối thiểu</th><th>Đã dùng</th><th>Hiệu lực</th></tr></thead><tbody>' +
+      r.vouchers.map(v => '<tr><td><strong>' + escapeHtml(v.code) + '</strong></td><td>' + v.discount_type + '</td>' +
+        '<td>' + (v.discount_type === 'PERCENT' ? v.discount_value + '%' : vnd(v.discount_value)) + '</td>' +
+        '<td>' + vnd(v.min_order_amount) + '</td><td>' + v.used_count + '/' + v.max_uses + '</td>' +
+        `<td>${fmt(v.valid_from)} → ${fmt(v.valid_to)}</td></tr>`).join('') +
+      '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">🎟️</span>Chưa có voucher nào</p>';
+}
+
+async function loadBranchesForVoucher() {
+  const r = await api('/chain/branches');
+  branches = r.branches;
+  const opts = branches.map(b => '<option value="' + b.id + '">' + escapeHtml(b.name) + '</option>').join('');
+  const vouBranch = document.getElementById('nv_branch');
+  if (vouBranch) vouBranch.innerHTML = '<option value="">— Toàn chuỗi —</option>' + opts;
+  const repBranch = document.getElementById('repBranch');
+  if (repBranch) repBranch.innerHTML = '<option value="all">— Toàn chuỗi —</option>' + opts;
+}
+
+// --- 2. ADD ACTIONS ---
+document.getElementById('addProd').onclick = async () => {
+  const name = document.getElementById('np_name').value.trim();
+  const price = Number(document.getElementById('np_price').value);
+  const prep = Number(document.getElementById('np_prep').value);
+  if (!name) return showMsg('<div class="msg err">Vui lòng nhập tên</div>');
+  if (price <= 0) return showMsg('<div class="msg err">Giá cơ bản phải lớn hơn 0</div>');
+  if (prep <= 0) return showMsg('<div class="msg err">Thời gian chế biến phải lớn hơn 0</div>');
+  try {
+    await api('/chain/products', { method:'POST', body:{
+      category_id: Number(document.getElementById('np_cat').value),
+      name, description: document.getElementById('np_desc').value,
+      base_price: price,
+      prep_time_minutes: prep,
+      image_url: document.getElementById('np_img').value || null,
+    }});
+    showMsg('<div class="msg ok">✓ Đã tạo sản phẩm</div>');
+    ['np_name','np_desc','np_img'].forEach(id => document.getElementById(id).value = '');
+    loadProducts();
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+};
+
+document.getElementById('addCat').onclick = async () => {
+  const name = document.getElementById('nc_name').value.trim();
+  if (!name) return showMsg('<div class="msg err">Vui lòng nhập tên</div>');
+  await api('/chain/categories', { method:'POST', body:{ name, sort_order: Number(document.getElementById('nc_sort').value) || 0 } });
+  document.getElementById('nc_name').value = '';
+  loadCats();
+};
+
+document.getElementById('addIng').onclick = async () => {
+  const name = document.getElementById('ni_name').value.trim();
+  const unit = document.getElementById('ni_unit').value.trim();
+  const cost = Number(document.getElementById('ni_cost').value);
+  const min = Number(document.getElementById('ni_min').value);
+  const reord = Number(document.getElementById('ni_reord').value);
+  if (!name || !unit) return showMsg('<div class="msg err">Vui lòng nhập tên và đơn vị</div>');
+  if (cost < 0) return showMsg('<div class="msg err">Đơn giá không được âm</div>');
+  if (min < 0) return showMsg('<div class="msg err">Tồn an toàn không được âm</div>');
+  if (reord < 0) return showMsg('<div class="msg err">Điểm đặt hàng không được âm</div>');
+  try {
+    await api('/chain/ingredients', { method:'POST', body:{
+      name, unit, unit_cost: cost, safety_stock_min: min, reorder_point: reord,
+    }});
+    showMsg('<div class="msg ok">✓ Đã tạo</div>');
+    ['ni_name','ni_unit'].forEach(id => document.getElementById(id).value = '');
+    loadIngs();
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+};
+
+document.getElementById('addVou').onclick = async () => {
+  const code = document.getElementById('nv_code').value.trim();
+  const val = Number(document.getElementById('nv_val').value);
+  const minOrder = Number(document.getElementById('nv_min').value);
+  const maxUses = Number(document.getElementById('nv_max').value);
+  if (!code) return showMsg('<div class="msg err">Vui lòng nhập mã</div>');
+  if (val <= 0) return showMsg('<div class="msg err">Giá trị voucher phải lớn hơn 0</div>');
+  if (minOrder < 0) return showMsg('<div class="msg err">Đơn tối thiểu không được âm</div>');
+  if (maxUses <= 0) return showMsg('<div class="msg err">Số lần dùng tối đa phải lớn hơn 0</div>');
+  try {
+    await api('/chain/vouchers', { method:'POST', body:{
+      code, discount_type: document.getElementById('nv_type').value,
+      discount_value: val, min_order_amount: minOrder, max_uses: maxUses,
+      branch_id: document.getElementById('nv_branch').value || null,
+      valid_from: document.getElementById('nv_from').value, valid_to: document.getElementById('nv_to').value,
+    }});
+    showMsg('<div class="msg ok">✓ Đã tạo voucher</div>');
+    ['nv_code'].forEach(id => document.getElementById(id).value = '');
+    loadVouchers();
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+}; 
+
+// --- 3. BOM ACTIONS ---
+function bomLineHtml(line) {
+  const opts = ings.map(i => '<option value="' + i.id + '"' + (line && line.ingredient_id === i.id ? ' selected' : '') + '>' + escapeHtml(i.name) + ' (' + i.unit + ')</option>').join('');
+  return '<div class="row-actions" data-bl style="align-items:flex-end">' +
+    '<div style="flex:1"><label>Nguyên liệu</label><select data-ing>' + opts + '</select></div>' +
+    '<div style="width:140px"><label>SL/đơn vị</label><input type="number" step="0.0001" data-qty value="' + (line ? Number(line.qty_per_unit) : 1) + '" min="0" /></div>' +
+    '<div><label>&nbsp;</label><label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem"><input type="checkbox" data-opt' + (line && line.is_optional ? ' checked' : '') + ' style="width:auto" /> Tùy chọn</label></div>' +
+    '<button class="secondary" type="button" onclick="this.parentElement.remove()" aria-label="Xóa">✕</button></div>';
+}
+document.getElementById('bom_pid').onchange = async () => {
+  const pid = document.getElementById('bom_pid').value; if (!pid) return;
+  const { bom } = await api('/chain/products/' + pid + '/bom');
+  document.getElementById('bom').innerHTML = bom.length ? bom.map(bomLineHtml).join('') : '<p class="tag">Chưa có nguyên liệu — bấm "+ Thêm dòng" để bắt đầu.</p>';
+};
+document.getElementById('addBomLine').onclick = () => {
+  if (!ings.length) return alertModal('Cần tạo nguyên liệu trước');
+  const el = document.getElementById('bom');
+  if (el.querySelector('p.tag')) el.innerHTML = '';
+  el.insertAdjacentHTML('beforeend', bomLineHtml(null));
+};
+document.getElementById('saveBom').onclick = async () => {
+  const pid = document.getElementById('bom_pid').value; if (!pid) return alertModal('Chọn sản phẩm');
+  const lines = [];
+  let invalidQty = false;
+  document.querySelectorAll('#bom [data-bl]').forEach(d => {
+    const qty = Number(d.querySelector('[data-qty]').value);
+    if (qty <= 0) { invalidQty = true; return; }
+    lines.push({ ingredient_id: Number(d.querySelector('[data-ing]').value), qty_per_unit: qty, is_optional: d.querySelector('[data-opt]').checked });
+  });
+  if (invalidQty) return alertModal('Số lượng nguyên liệu phải lớn hơn 0');
+  await withLoading('Đang lưu BOM...', async () => {
+    await api('/chain/products/' + pid + '/bom', { method:'POST', body:{ lines } });
+    showMsg('<div class="msg ok">✓ Đã lưu BOM. Hệ thống đã làm mới khả dụng món tại các chi nhánh.</div>');
+  });
+}; 
+
+// --- 4. EDIT/DELETE CATEGORY ---
+window.editCat = async function(id) {
+  const cat = cats.find(c => c.id === id);
+  showModal(`<h3>✏️ Sửa danh mục #${id}</h3>
+    <label>Tên danh mục</label><input id="ec_name" value="${escapeHtml(cat.name)}" />
+    <label>Thứ tự sắp xếp</label><input id="ec_sort" type="number" value="${cat.sort_order}" />
+    <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
+      <button class="secondary" onclick="closeModal()">Hủy</button>
+      <button onclick="saveCat(${id})">Lưu thay đổi</button>
+    </div>`);
+};
+window.saveCat = async function(id) {
+  const name = document.getElementById('ec_name').value.trim();
+  const sort = Number(document.getElementById('ec_sort').value);
+  if (!name) return alertModal('Vui lòng nhập tên');
+  try {
+    await api('/chain/categories/' + id, { method:'PATCH', body:{ name, sort_order: sort } });
+    closeModal(); loadCats(); showMsg('<div class="msg ok">✓ Đã cập nhật danh mục</div>');
+  } catch (e) { alertModal(e.message); }
+};
+window.deleteCat = async function(id) {
+  if (!await confirmModal('Xác nhận xóa danh mục này? Điều này chỉ thành công nếu danh mục không có món ăn nào.')) return;
+  try {
+    await api('/chain/categories/' + id, { method:'DELETE' });
+    loadCats(); showMsg('<div class="msg ok">✓ Đã xóa danh mục</div>');
+  } catch (e) { alertModal(e.message); }
+};
+
+// --- 5. EDIT/DELETE INGREDIENT ---
+window.editIng = function(id) {
+  const ing = ings.find(i => i.id === id);
+  showModal(`<h3>✏️ Sửa nguyên liệu #${id}</h3>
+    <label>Tên</label><input id="ei_name" value="${escapeHtml(ing.name)}" />
+    <div class="grid grid-2">
+      <div><label>Đơn vị</label><input id="ei_unit" value="${escapeHtml(ing.unit)}" /></div>
+      <div><label>Đơn giá</label><input id="ei_cost" type="number" value="${ing.unit_cost}" /></div>
+      <div><label>Tồn an toàn</label><input id="ei_min" type="number" value="${ing.safety_stock_min}" /></div>
+      <div><label>Điểm đặt hàng</label><input id="ei_reord" type="number" value="${ing.reorder_point}" /></div>
+    </div>
+    <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
+      <button class="secondary" onclick="closeModal()">Hủy</button>
+      <button onclick="saveIng(${id})">Lưu thay đổi</button>
+    </div>`);
+};
+window.saveIng = async function(id) {
+  try {
+    await api('/chain/ingredients/' + id, { method:'PATCH', body:{
+      name: document.getElementById('ei_name').value.trim(),
+      unit: document.getElementById('ei_unit').value.trim(),
+      unit_cost: Number(document.getElementById('ei_cost').value),
+      safety_stock_min: Number(document.getElementById('ei_min').value),
+      reorder_point: Number(document.getElementById('ei_reord').value)
+    }});
+    closeModal(); loadIngs(); showMsg('<div class="msg ok">✓ Đã cập nhật nguyên liệu</div>');
+  } catch (e) { alertModal(e.message); }
+};
+window.deleteIng = async function(id) {
+  if (!await confirmModal('Xác nhận xóa nguyên liệu? (Chỉ xóa được nếu không nằm trong BOM của sản phẩm nào)')) return;
+  try {
+    await api('/chain/ingredients/' + id, { method:'DELETE' });
+    loadIngs(); showMsg('<div class="msg ok">✓ Đã xóa nguyên liệu</div>');
+  } catch (e) { alertModal(e.message); }
+};
+
+// --- 6. REPORT LOGIC ---
+const currentYear = new Date().getFullYear();
+document.getElementById('r_monthYear').value = currentYear;
+document.getElementById('r_toYear').value = currentYear;
+document.getElementById('r_fromYear').value = currentYear - 2;
+
+window.toggleRepInputs = function() {
+  const type = document.getElementById('repType').value;
+  document.getElementById('filter-day').style.display = type === 'day' ? '' : 'none';
+  document.getElementById('filter-month').style.display = type === 'month' ? '' : 'none';
+  document.getElementById('filter-year').style.display = type === 'year' ? '' : 'none';
+};
+
+document.getElementById('loadRep').onclick = async () => {
+  const type = document.getElementById('repType').value;
+  const branchId = document.getElementById('repBranch').value;
+  let from = '', to = '';
+
+  if (type === 'day') {
+    from = document.getElementById('r_fromDay').value;
+    to = document.getElementById('r_toDay').value;
+  } else if (type === 'month') {
+    const y = document.getElementById('r_monthYear').value;
+    const fm = document.getElementById('r_fromMonth').value;
+    const tm = document.getElementById('r_toMonth').value;
+    if (y && fm && tm) {
+      from = `${y}-${fm.padStart(2, '0')}-01`;
+      const lastDay = new Date(y, tm, 0).getDate();
+      to = `${y}-${tm.padStart(2, '0')}-${lastDay}`;
+    }
+  } else if (type === 'year') {
+    const fy = document.getElementById('r_fromYear').value;
+    const ty = document.getElementById('r_toYear').value;
+    if (fy && ty) {
+      from = `${fy}-01-01`;
+      to = `${ty}-12-31`;
+    }
+  }
+
+  const q = [`type=${type}`];
+  if (branchId !== 'all') q.push('branch_id=' + branchId);
+  if (from) q.push('from=' + from); 
+  if (to) q.push('to=' + to);
+
+  try {
+    const r = await api('/chain/reports/summary?' + q.join('&'));
+    
+    document.getElementById('repBox').innerHTML =
+      '<div class="kpi"><div class="l">Doanh thu</div><div class="v">' + vnd(r.revenue.revenue) + '</div></div>' +
+      '<div class="kpi"><div class="l">Số đơn hoàn tất</div><div class="v">' + r.revenue.order_count + '</div></div>' +
+      '<div class="kpi"><div class="l">Đơn hủy</div><div class="v">' + r.cancelled + '</div></div>';
+
+    let detailHtml = '<h3>Chi tiết doanh thu</h3>';
+    if (r.details && r.details.length > 0) {
+      detailHtml += '<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Số lượng đơn</th><th>Doanh thu</th></tr></thead><tbody>';
+      detailHtml += r.details.map(d => {
+        let label = d.label;
+        if (type === 'month') label = 'Tháng ' + label.split('-')[1] + '/' + label.split('-')[0];
+        if (type === 'year') label = 'Năm ' + label;
+        return `<tr>
+                  <td><strong>${escapeHtml(label)}</strong></td>
+                  <td>${d.orders}</td>
+                  <td>${vnd(d.revenue)}</td>
+                </tr>`;
+      }).join('');
+      detailHtml += '</tbody></table></div>';
+    } else {
+      detailHtml += '<p class="empty">Không có dữ liệu trong thời gian này</p>';
+    }
+    document.getElementById('repDetails').innerHTML = detailHtml;
+
+    document.getElementById('repTop').innerHTML = r.top_products.length
+      ? '<div class="table-wrap"><table><thead><tr><th>Sản phẩm</th><th>Số lượng bán</th></tr></thead><tbody>' +
+        r.top_products.map(t => '<tr><td><strong>' + escapeHtml(t.product_name) + '</strong></td><td>' + t.qty + '</td></tr>').join('') + '</tbody></table></div>'
+      : '<p class="tag">Chưa có sản phẩm nào được bán ra.</p>';
+
+  } catch (e) { alertModal('Lỗi tải báo cáo: ' + e.message); }
+};
+
+// --- 7. INIT ---
+async function init() {
+  await loadCats(); 
+  await loadIngs(); 
+  await loadProducts(); 
+  await loadVouchers(); 
+  await loadBranchesForVoucher();
+  document.getElementById('bom_pid').dispatchEvent(new Event('change'));
+}
+init();
+</script>
+</body>
+</html>

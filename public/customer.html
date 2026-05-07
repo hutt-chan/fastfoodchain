@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Khách hàng — FastFood Chain</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div><h1>Cổng khách hàng</h1><span class="tag" id="who"></span></div>
+  <div class="row-actions">
+    <button class="secondary" type="button" id="profileBtn">👤 Hồ sơ</button>
+    <button class="secondary" type="button" id="logoutBtn">Đăng xuất</button>
+    <a class="btn secondary" href="/" style="text-decoration:none">Trang chủ</a>
+  </div>
+</header>
+<div class="layout">
+  <div class="hero">
+    <h1>Hôm nay ăn gì? 🤔</h1>
+    <p>Chọn chi nhánh · Thêm món yêu thích · Đặt ngay!</p>
+    <div class="hero-foods" aria-hidden="true"><span>🍔</span><span>🍟</span><span>🍗</span><span>🍕</span><span>🥤</span></div>
+  </div>
+  <div id="msg" aria-live="polite"></div>
+  <div class="tabs">
+    <button class="active" data-tab="order">🍔 Đặt món</button>
+    <button data-tab="orders">📋 Đơn của tôi</button>
+  </div>
+  <section id="tab-order" class="tab-panel active">
+    <div class="grid grid-2">
+      <div class="card">
+        <h2>📍 1. Chọn chi nhánh</h2>
+        <p class="tag">Chọn từ danh sách hoặc dùng GPS để tìm chi nhánh gần nhất.</p>
+        <label for="branchSel">Chi nhánh phục vụ</label>
+        <select id="branchSel"><option value="">— Chọn chi nhánh —</option></select>
+        <div class="row-actions">
+          <button type="button" class="secondary" id="useGps">📍 Tìm gần nhất theo GPS</button>
+        </div>
+        <p id="branchInfo" class="tag"></p>
+      </div>
+      <div class="card">
+        <h2>🛒 2. Giỏ hàng</h2>
+        <div id="cart"></div>
+        <div id="totals" class="kpi-grid" style="margin-top:0.75rem"></div>
+        <label for="vcode" style="margin-top:0.85rem">Mã voucher</label>
+        <div class="row-actions">
+          <input id="vcode" name="vcode" style="flex:1" placeholder="VD: WELCOME10" />
+          <button type="button" class="secondary" id="applyV">Áp dụng</button>
+          <button type="button" class="secondary" id="clearV" title="Bỏ voucher" aria-label="Bỏ voucher">✕</button>
+        </div>
+        <p id="vinfo" class="tag" aria-live="polite"></p>
+        <label for="addr">Địa chỉ giao</label>
+        <textarea id="addr" name="addr" rows="2" autocomplete="street-address"></textarea>
+        <label style="display:flex;align-items:center;gap:0.4rem;margin-top:0.25rem;font-size:0.85rem">
+          <input type="checkbox" id="saveAddr" style="width:auto" /> Lưu làm địa chỉ mặc định
+        </label>
+        <label for="pay">Phương thức thanh toán</label>
+        <select id="pay" name="pay">
+          <option value="COD">💵 COD — tiền mặt khi nhận</option>
+          <option value="ONLINE">💳 Online (mock thành công)</option>
+        </select>
+        <div class="row-actions"><button type="button" id="checkout">🛍️ Đặt hàng</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>🍽️ 3. Thực đơn chi nhánh</h2>
+      <div class="filter-bar">
+        <input id="menuSearch" placeholder="🔎 Tìm món..." aria-label="Tìm món" />
+        <select id="menuCat"><option value="">Tất cả danh mục</option></select>
+      </div>
+      <div id="menu"><p class="empty"><span class="icon">🏪</span>Vui lòng chọn chi nhánh để xem thực đơn</p></div>
+    </div>
+  </section>
+  <section id="tab-orders" class="tab-panel">
+    <div class="card">
+      <h2>📋 Đơn đã đặt</h2>
+      <p class="tag">Theo dõi tiến độ, hủy hoặc đánh giá đơn hàng.</p>
+      <div id="orders"></div>
+    </div>
+  </section>
+</div>
+<script src="/js/api.js"></script>
+<script>
+const u = requireLogin();
+if (u) document.getElementById('who').textContent = u.full_name + ' — ' + (u.role_code || u.role);
+let branchId = null, voucherId = null, discount = 0, cartItems = [], allMenu = [], allBranches = [];
+let currentLat = null, currentLng = null; // Thêm 2 biến nàydocument.getElementById('logoutBtn').onclick = logout;
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+    if (b.dataset.tab === 'orders') loadOrders();
+  };
+});
+function showMsg(html) {
+  document.getElementById('msg').innerHTML = html || '';
+  if (html) setTimeout(() => document.getElementById('msg').innerHTML = '', 5000);
+}
+function formatDateTime(dateString) {
+  if (!dateString) return '';
+  const d = new Date(dateString);
+  // Hiển thị giờ:phút ngày/tháng/năm (VD: 14:30 07/05/2024)
+  return d.toLocaleString('vi-VN', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+}
+function fallbackImg(name) {
+  const m = { 'burger':'🍔','gà':'🍗','ga':'🍗','cơm':'🍚','com':'🍚','pizza':'🍕','mì':'🍝','mi':'🍝','trà':'🍵','tra':'🍵','coca':'🥤','sữa':'🥛','sua':'🥛','khoai':'🍟','kem':'🍨','combo':'🍱' };
+  const lc = (name || '').toLowerCase();
+  for (const k of Object.keys(m)) if (lc.includes(k)) return m[k];
+  return '🍴';
+}
+async function loadBranches() {
+  const sel = document.getElementById('branchSel');
+  try {
+    const data = await api('/branches');
+    allBranches = data.branches || [];
+    sel.innerHTML = '<option value="">— Chọn chi nhánh —</option>' +
+      allBranches.map(b => '<option value="' + b.id + '">' + escapeHtml(b.name) + ' — ' + escapeHtml(b.address) + '</option>').join('');
+    if (u && u.default_lat && u.default_lng) {
+      try {
+        const near = await api('/branches?lat=' + u.default_lat + '&lng=' + u.default_lng);
+        if (near.nearest) {
+          sel.value = near.nearest.id;
+          await selectBranch(near.nearest.id, near.nearest);
+        }
+      } catch {}
+    }
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+}
+async function selectBranch(id, info) {
+  branchId = Number(id);
+  const b = info || allBranches.find(x => x.id == branchId);
+  if (b) {
+    document.getElementById('branchInfo').innerHTML = '✓ Đang phục vụ: <strong>' + escapeHtml(b.name) + '</strong>' +
+      (b.distance_km != null ? ' — cách ' + b.distance_km + ' km' : '');
+  }
+  if (u && u.default_address && !document.getElementById('addr').value) document.getElementById('addr').value = u.default_address;
+  voucherId = null; discount = 0;
+  document.getElementById('vinfo').textContent = '';
+  await loadMenu();
+  await loadCart();
+}
+document.getElementById('branchSel').onchange = (e) => {
+  if (e.target.value) selectBranch(e.target.value);
+  else { branchId = null; document.getElementById('menu').innerHTML = '<p class="empty"><span class="icon">🏪</span>Vui lòng chọn chi nhánh</p>'; loadCart(); }
+};
+
+document.getElementById('useGps').onclick = () => {
+  if (!navigator.geolocation) return showMsg('<div class="msg err">Trình duyệt không hỗ trợ định vị</div>');
+  showLoading('Đang xác định vị trí...');
+  
+  navigator.geolocation.getCurrentPosition(async p => {
+    try {
+      currentLat = p.coords.latitude;
+      currentLng = p.coords.longitude;
+      
+      const data = await api('/branches?lat=' + currentLat + '&lng=' + currentLng);
+      hideLoading();
+      
+      if (!data.nearest) return showMsg('<div class="msg err">' + (data.message || 'Khu vực bạn chưa có chi nhánh phục vụ') + '</div>');
+      document.getElementById('branchSel').value = data.nearest.id;
+      await selectBranch(data.nearest.id, data.nearest);
+
+      try {
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentLat}&lon=${currentLng}&accept-language=vi`);
+        const geoData = await geoRes.json();
+        
+        if (geoData && geoData.display_name) {
+          document.getElementById('addr').value = geoData.display_name;
+        }
+      } catch (geoErr) {
+        console.warn('Không thể lấy địa chỉ văn bản:', geoErr);
+      }
+
+    } catch (e) { 
+      hideLoading(); 
+      showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); 
+    }
+  }, () => { 
+    hideLoading(); 
+    showMsg('<div class="msg err">Không lấy được vị trí GPS</div>'); 
+  });
+};
+
+function renderMenu() {
+  const search = document.getElementById('menuSearch').value.trim().toLowerCase();
+  const cat = document.getElementById('menuCat').value;
+  let items = allMenu;
+  if (search) items = items.filter(i => i.name.toLowerCase().includes(search) || (i.description || '').toLowerCase().includes(search));
+  if (cat) items = items.filter(i => i.category_name === cat);
+  const grouped = {};
+  items.forEach(i => { const k = i.category_name || 'Khác'; (grouped[k] = grouped[k] || []).push(i); });
+  if (!items.length) {
+    document.getElementById('menu').innerHTML = '<p class="empty"><span class="icon">🔍</span>Không có món phù hợp</p>';
+    return;
+  }
+  document.getElementById('menu').innerHTML = Object.entries(grouped).map(([cat, list]) =>
+    '<h3 class="cat-heading">' + escapeHtml(cat) + ' <small class="tag">(' + list.length + ' món)</small></h3><div class="menu-grid">' +
+    list.map(i => {
+      const price = Number(i.price_override !== null && i.price_override !== undefined ? i.price_override : i.base_price);
+      const off = !i.is_available;
+      const reason = off ? (i.manual_off ? 'Tạm hết' : (i.auto_off ? 'Hết NL' : 'Hết hàng')) : '';
+      const imgHtml = i.image_url
+        ? '<img src="' + escapeHtml(i.image_url) + '" alt="' + escapeHtml(i.name) + '" loading="lazy" onerror="this.outerHTML=\'<span class=&quot;food-emoji&quot;>' + fallbackImg(i.name) + '</span>\'" />'
+        : '<span class="food-emoji">' + fallbackImg(i.name) + '</span>';
+      return '<div class="menu-item' + (off ? ' off' : '') + '">' +
+        '<div class="menu-img">' + imgHtml + (off ? '<span class="overlay-tag">' + reason + '</span>' : '') + '</div>' +
+        '<div class="menu-body"><h4>' + escapeHtml(i.name) + '</h4>' +
+        '<small class="tag">' + escapeHtml(i.description || '') + '</small>' +
+        '<div class="menu-foot"><span class="price">' + vnd(price) + '</span>' +
+        (off ? '<span class="badge warn">Hết</span>' : '<button type="button" data-add="' + i.id + '" aria-label="Thêm ' + escapeHtml(i.name) + ' vào giỏ">+ Thêm</button>') +
+        '</div></div></div>';
+    }).join('') + '</div>'
+  ).join('');
+  document.querySelectorAll('[data-add]').forEach(b => {
+    b.onclick = async () => {
+      try {
+        await api('/cart/items', { method:'POST', body:{ branch_id: branchId, product_id: Number(b.dataset.add), quantity: 1 } });
+        loadCart();
+      } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+    };
+  });
+}
+async function loadMenu() {
+  if (!branchId) return;
+  document.getElementById('menu').innerHTML = '<div class="menu-grid">' + Array(4).fill('<div class="menu-item"><div class="menu-img" style="background:var(--surface-2)"></div><div class="menu-body"><div class="skeleton" style="margin-bottom:0.5rem"></div><div class="skeleton" style="width:60%"></div></div></div>').join('') + '</div>';
+  const { items } = await api('/branches/' + branchId + '/menu');
+  allMenu = items;
+  const cats = [...new Set(items.map(i => i.category_name).filter(Boolean))];
+  document.getElementById('menuCat').innerHTML = '<option value="">Tất cả danh mục</option>' + cats.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+  renderMenu();
+}
+document.getElementById('menuSearch').addEventListener('input', renderMenu);
+document.getElementById('menuCat').addEventListener('change', renderMenu);
+async function loadCart() {
+  if (!branchId) {
+    document.getElementById('cart').innerHTML = '<p class="empty"><span class="icon">🛒</span>Chọn chi nhánh trước</p>';
+    document.getElementById('totals').innerHTML = ''; return;
+  }
+  const { items } = await api('/cart?branch_id=' + branchId);
+  cartItems = items;
+  const el = document.getElementById('cart');
+  if (!items.length) { el.innerHTML = '<p class="empty"><span class="icon">🛒</span>Giỏ hàng trống</p>'; renderTotals(); return; }
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Món</th><th>SL</th><th>Đơn giá</th><th>Tạm</th><th></th></tr></thead><tbody>' +
+    items.map(c => {
+      const sub = Number(c.unit_price) * c.quantity;
+      return '<tr><td>' + escapeHtml(c.name) + '</td><td><div class="row-actions" style="margin:0">' +
+        '<button class="secondary" data-dec="' + c.id + '" data-q="' + c.quantity + '" style="padding:0.2rem 0.55rem" aria-label="Giảm">−</button>' +
+        '<span style="min-width:1.5rem;text-align:center">' + c.quantity + '</span>' +
+        '<button class="secondary" data-inc="' + c.id + '" data-q="' + c.quantity + '" style="padding:0.2rem 0.55rem" aria-label="Tăng">+</button></div></td>' +
+        '<td>' + vnd(c.unit_price) + '</td><td>' + vnd(sub) + '</td>' +
+        '<td><button class="secondary" data-del="' + c.id + '" style="padding:0.2rem 0.55rem" aria-label="Xóa">🗑️</button></td></tr>';
+    }).join('') + '</tbody></table></div>';
+  el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    await api('/cart/items/' + b.dataset.del, { method:'DELETE' }); loadCart();
+  });
+  const change = async (id, q) => {
+    if (q < 1) await api('/cart/items/' + id, { method:'DELETE' });
+    else await api('/cart/items/' + id, { method:'PATCH', body:{ quantity: q } });
+    loadCart();
+  };
+  el.querySelectorAll('[data-inc]').forEach(b => b.onclick = () => change(b.dataset.inc, Number(b.dataset.q) + 1));
+  el.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => change(b.dataset.dec, Number(b.dataset.q) - 1));
+  renderTotals();
+}
+function renderTotals() {
+  let subtotal = 0; cartItems.forEach(c => subtotal += Number(c.unit_price) * c.quantity);
+  const ship = subtotal > 0 ? 20000 : 0;
+  const total = Math.max(0, subtotal - discount + ship);
+  document.getElementById('totals').innerHTML =
+    '<div class="kpi"><div class="l">Tạm tính</div><div class="v">' + vnd(subtotal) + '</div></div>' +
+    '<div class="kpi"><div class="l">Giảm giá</div><div class="v">' + vnd(discount) + '</div></div>' +
+    '<div class="kpi"><div class="l">Phí ship</div><div class="v">' + vnd(ship) + '</div></div>' +
+    '<div class="kpi"><div class="l">Tổng cuối</div><div class="v">' + vnd(total) + '</div></div>';
+}
+document.getElementById('clearV').onclick = () => {
+  voucherId = null; discount = 0;
+  document.getElementById('vcode').value = '';
+  document.getElementById('vinfo').textContent = '';
+  renderTotals();
+};
+document.getElementById('applyV').onclick = async () => {
+  const code = document.getElementById('vcode').value.trim();
+  if (!code) return document.getElementById('vinfo').textContent = '';
+  if (!branchId) return showMsg('<div class="msg err">Chọn chi nhánh trước</div>');
+  let subtotal = 0; cartItems.forEach(c => subtotal += Number(c.unit_price) * c.quantity);
+  try {
+    const v = await api('/vouchers/validate', { method:'POST', body:{ code, branch_id: branchId, subtotal } });
+    voucherId = v.voucher_id; discount = v.discount_amount;
+    document.getElementById('vinfo').innerHTML = '<span style="color:var(--success);font-weight:700">✓ Áp dụng thành công: giảm ' + vnd(discount) + '</span>';
+    renderTotals();
+  } catch (e) {
+    voucherId = null; discount = 0;
+    document.getElementById('vinfo').innerHTML = '<span style="color:var(--danger);font-weight:700">✗ ' + escapeHtml(e.message) + '</span>';
+    renderTotals();
+  }
+};
+document.getElementById('checkout').onclick = async () => {
+  showMsg('');
+  const addr = document.getElementById('addr').value.trim();
+  if (!branchId || !addr) return showMsg('<div class="msg err">Cần chọn chi nhánh và nhập địa chỉ</div>');
+  if (!cartItems.length) return showMsg('<div class="msg err">Giỏ hàng trống</div>');
+  const pay = document.getElementById('pay').value;
+  const ok = await confirmModal('Đặt đơn ' + cartItems.length + ' món tại chi nhánh đã chọn với phương thức ' + (pay === 'COD' ? 'COD' : 'thanh toán online'), { title: 'Xác nhận đặt hàng', okText: 'Đặt ngay' });
+  if (!ok) return;
+  
+  try {
+    await withLoading('Đang gửi đơn...', async () => {
+      // Xác định tọa độ sẽ gửi lên server (ưu tiên tọa độ vừa lấy từ GPS, nếu không có thì lấy mặc định của user)
+      const finalLat = currentLat || (u && u.default_lat) || null;
+      const finalLng = currentLng || (u && u.default_lng) || null;
+
+      // 1. Đặt hàng
+      const o = await api('/orders', { method:'POST', body:{
+        branch_id: branchId, payment_method: pay, delivery_address: addr,
+        delivery_lat: finalLat, delivery_lng: finalLng,
+        voucher_id: voucherId
+      }});
+
+      // 2. Kiểm tra Checkbox: Nếu tick thì lưu vào hồ sơ mặc định
+      if (document.getElementById('saveAddr').checked) {
+        await api('/auth/profile', {
+          method: 'PATCH',
+          body: {
+            default_address: addr,
+            default_lat: finalLat,
+            default_lng: finalLng
+          }
+        });
+        // Cập nhật lại biến user để đồng bộ giao diện
+        const me = await api('/auth/me');
+        setUser(me);
+      }
+
+      if (pay === 'ONLINE' && o.status === 'PENDING_PAYMENT') {
+        await api('/orders/' + o.order_id + '/after-online-pay', { method:'POST', body:{} });
+        showMsg('<div class="msg ok">✓ Thanh toán online thành công. Mã đơn: <strong>' + o.order_code + '</strong></div>');
+      } else {
+        showMsg('<div class="msg ok">✓ Đặt hàng thành công. Mã đơn: <strong>' + o.order_code + '</strong></div>');
+      }
+      
+      voucherId = null; discount = 0; currentLat = null; currentLng = null;
+      document.getElementById('vcode').value = ''; document.getElementById('vinfo').textContent = '';
+      document.getElementById('saveAddr').checked = false; // Bỏ tick sau khi đặt xong
+      
+      await loadCart(); await loadOrders();
+    });
+  } catch (e) {
+      alertModal(e.message);
+  }
+};
+document.getElementById('logoutBtn').onclick = logout;
+
+async function loadOrders() {
+  const el = document.getElementById('orders');
+  el.innerHTML = '<div class="skeleton" style="height:80px"></div>';
+  try {
+    const { orders } = await api('/orders');
+    if (!orders.length) { el.innerHTML = '<p class="empty"><span class="icon">📭</span>Bạn chưa đặt đơn nào</p>'; return; }
+    el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Chi nhánh</th><th>Tổng</th><th>Trạng thái</th><th></th></tr></thead><tbody>' +
+      orders.map(o => {
+        const canCancel = ['PENDING_BRANCH','PENDING_PAYMENT','AWAITING_KITCHEN'].includes(o.status);
+        return '<tr><td><strong>' + o.order_code + '</strong></td><td>' + escapeHtml(o.branch_name) + '</td><td>' + vnd(o.total) + '</td>' +
+          '<td><span class="badge ' + (o.status === 'COMPLETED' ? 'ok' : (o.status === 'CANCELLED' ? '' : 'warn')) + '">' + statusLabel(o.status) + '</span></td>' +
+          '<td><button class="secondary" onclick="viewOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Xem</button>' +
+          (canCancel ? '<button class="danger" onclick="cancelOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Hủy</button>' : '') +
+          (o.status === 'COMPLETED' ? '<button onclick="reviewOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">★ Đánh giá</button>' : '') +
+          '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (e) {
+    el.innerHTML = '<div class="msg err">' + escapeHtml(e.message) + '</div>';
+  }
+}
+window.viewOrder = async function(id) {
+  try {
+    const { order, items, history, delivery } = await api('/orders/' + id);
+    const lines = items.map(i => '<tr><td>' + escapeHtml(i.product_name) + '</td><td>' + i.quantity + '</td><td>' + vnd(i.unit_price) + '</td><td>' + vnd(i.unit_price * i.quantity) + '</td></tr>').join('');
+    const hist = (history || []).map(h => '<li><small class="tag">🕒 ' + formatDateTime(h.created_at) + '</small> — <strong>' + statusLabel(h.status) + '</strong>' + (h.note ? ' · ' + escapeHtml(h.note) : '') + '</li>').join('');
+    showModal('<h3>Đơn ' + order.order_code + '</h3>' +
+      '<div style="margin-bottom:0.6rem">' + renderStatusPipeline(order.status, order.payment_method) + '</div>' +
+      '<div class="kpi-grid">' +
+      '<div class="kpi"><div class="l">Chi nhánh</div><div class="v" style="font-size:0.95rem">' + escapeHtml(order.branch_name) + '</div></div>' +
+      '<div class="kpi"><div class="l">PT thanh toán</div><div class="v" style="font-size:0.95rem">' + order.payment_method + '</div></div>' +
+      '<div class="kpi"><div class="l">TT thanh toán</div><div class="v" style="font-size:0.95rem">' + order.payment_status + '</div></div>' +
+      '<div class="kpi"><div class="l">Tổng</div><div class="v">' + vnd(order.total) + '</div></div></div>' +
+      '<h4 style="margin-top:1rem">Món</h4><div class="table-wrap"><table><thead><tr><th>Tên</th><th>SL</th><th>Đơn giá</th><th>Tạm</th></tr></thead><tbody>' + lines + '</tbody></table></div>' +
+      '<h4 style="margin-top:1rem">Lịch sử trạng thái</h4><ul style="font-size:0.85rem">' + hist + '</ul>' +
+      (delivery ? '<p class="tag">Vận chuyển: ' + escapeHtml(delivery.external_shipment_id || '') + ' · ' + escapeHtml(delivery.status || '') + '</p>' : '') +
+      '<div class="row-actions" style="margin-top:1rem;justify-content:flex-end"><button class="secondary" onclick="closeModal()">Đóng</button></div>');
+  } catch (e) { alertModal(e.message); }
+};
+window.cancelOrder = async function(id) {
+  const reason = await promptModal({ title: 'Hủy đơn', label: 'Lý do hủy', defaultValue: 'Đổi ý' });
+  if (reason === null) return;
+  try { await api('/orders/' + id + '/cancel', { method:'POST', body:{ reason } }); loadOrders(); loadMenu(); }
+  catch (e) { alertModal(e.message); }
+};
+window.reviewOrder = async function(id) {
+  showModal('<h3>★ Đánh giá đơn hàng</h3>' +
+    '<label for="rf">Chấm món (1–5)</label><input id="rf" type="number" min="1" max="5" value="5" />' +
+    '<label for="rd">Chấm giao hàng (1–5)</label><input id="rd" type="number" min="1" max="5" value="5" />' +
+    '<label for="rc">Nhận xét</label><textarea id="rc" rows="3"></textarea>' +
+    '<div class="row-actions" style="margin-top:1rem;justify-content:flex-end">' +
+    '<button class="secondary" onclick="closeModal()">Hủy</button>' +
+    '<button onclick="submitReview(' + id + ')">Gửi đánh giá</button></div>');
+};
+window.submitReview = async function(id) {
+  const rf = Number(document.getElementById('rf').value) || 5;
+  const rd = Number(document.getElementById('rd').value) || 5;
+  const c = document.getElementById('rc').value;
+  try {
+    await api('/orders/' + id + '/review', { method:'POST', body:{ rating_food: rf, rating_delivery: rd, comment: c } });
+    closeModal();
+    showMsg('<div class="msg ok">Cảm ơn đánh giá của bạn!</div>');
+  } catch (e) { alertModal(e.message); }
+};
+document.getElementById('profileBtn').onclick = () => {
+  showModal('<h3>👤 Hồ sơ cá nhân</h3>' +
+    '<label for="pf_name">Họ tên</label><input id="pf_name" value="' + escapeHtml(u.full_name || '') + '" />' +
+    '<label for="pf_email">Email</label><input id="pf_email" type="email" value="' + escapeHtml(u.email || '') + '" />' +
+    '<label for="pf_addr">Địa chỉ giao mặc định</label><input id="pf_addr" value="' + escapeHtml(u.default_address || '') + '" />' +
+    '<div class="grid grid-2"><div><label for="pf_lat">Vĩ độ mặc định</label><input id="pf_lat" type="number" step="0.0000001" value="' + (u.default_lat || '') + '" /></div>' +
+    '<div><label for="pf_lng">Kinh độ mặc định</label><input id="pf_lng" type="number" step="0.0000001" value="' + (u.default_lng || '') + '" /></div></div>' +
+    '<hr style="border-color:var(--border);margin:1rem 0"/><h4>🔒 Đổi mật khẩu</h4>' +
+    '<label for="pf_oldp">Mật khẩu hiện tại</label><input id="pf_oldp" type="password" autocomplete="current-password" />' +
+    '<label for="pf_newp">Mật khẩu mới (≥ 8 ký tự)</label><input id="pf_newp" type="password" autocomplete="new-password" />' +
+    '<div class="row-actions" style="margin-top:1rem;justify-content:flex-end">' +
+    '<button class="secondary" onclick="closeModal()">Đóng</button>' +
+    '<button class="secondary" onclick="changePassword()">Đổi mật khẩu</button>' +
+    '<button onclick="saveProfile()">Lưu hồ sơ</button></div>');
+};
+window.saveProfile = async function() {
+  try {
+    await api('/auth/profile', { method:'PATCH', body:{
+      full_name: document.getElementById('pf_name').value || null,
+      email: document.getElementById('pf_email').value || null,
+      default_address: document.getElementById('pf_addr').value || null,
+      default_lat: parseFloat(document.getElementById('pf_lat').value) || null,
+      default_lng: parseFloat(document.getElementById('pf_lng').value) || null,
+    }});
+    const me = await api('/auth/me'); setUser(me);
+    closeModal();
+    await alertModal('Đã lưu hồ sơ');
+    location.reload();
+  } catch (e) { alertModal(e.message); }
+};
+window.changePassword = async function() {
+  const oldP = document.getElementById('pf_oldp').value;
+  const newP = document.getElementById('pf_newp').value;
+  if (!newP || newP.length < 8) return alertModal('Mật khẩu mới phải có ít nhất 8 ký tự');
+  try { await api('/auth/password', { method:'PATCH', body:{ old_password: oldP, new_password: newP } }); await alertModal('✓ Đổi mật khẩu thành công'); }
+  catch (e) { alertModal(e.message); }
+};
+loadBranches();
+</script>
+</body>
+</html>

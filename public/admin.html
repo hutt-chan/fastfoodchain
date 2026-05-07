@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin — FastFood Chain</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div><h1>Quản trị viên</h1><span class="tag" id="who"></span></div>
+  <div class="row-actions">
+    <button class="secondary" type="button" id="logoutBtn">Đăng xuất</button>
+    <a class="btn secondary" href="/" style="text-decoration:none">Trang chủ</a>
+  </div>
+</header>
+<div class="layout">
+  <div id="msg" aria-live="polite"></div>
+  <div class="tabs">
+    <button class="active" data-tab="cfg">⚙️ Cấu hình</button>
+    <button data-tab="branches">🏬 Chi nhánh</button>
+    <button data-tab="users">👥 Người dùng</button>
+    <button data-tab="audit">📜 Audit log</button>
+  </div>
+  <section id="tab-cfg" class="tab-panel active">
+    <div class="card">
+      <h2>⚙️ Cấu hình hệ thống (UC-12)</h2>
+      <div id="cfg"></div>
+      <h3>Cập nhật / thêm cấu hình</h3>
+      <div class="grid grid-2">
+        <div><label for="ck">Khóa</label><input id="ck" placeholder="base_shipping_fee" /></div>
+        <div><label for="cv">Giá trị</label><input id="cv" /></div>
+      </div>
+      <div class="row-actions"><button id="saveCfg">💾 Lưu</button></div>
+    </div>
+    <div class="card">
+      <h3>🛠️ Bảo trì hệ thống</h3>
+      <p class="tag">Chạy thủ công cập nhật khả dụng món theo tồn kho (UC-39 / UC-40).</p>
+      <div class="row-actions"><button class="secondary" id="refreshMenus">🔄 Refresh menus toàn chuỗi</button></div>
+    </div>
+  </section>
+  <section id="tab-branches" class="tab-panel">
+    <div class="card">
+      <h2>🏬 Chi nhánh (UC-10)</h2>
+      <div id="branches"></div>
+      <h3>Tạo chi nhánh mới</h3>
+      <div class="grid grid-2">
+        <div><label for="nb_name">Tên</label><input id="nb_name" /></div>
+        <div><label for="nb_addr">Địa chỉ</label><input id="nb_addr" /></div>
+        <div><label for="nb_lat">Vĩ độ</label><input id="nb_lat" type="number" step="0.0000001" /></div>
+        <div><label for="nb_lng">Kinh độ</label><input id="nb_lng" type="number" step="0.0000001" /></div>
+        <div><label for="nb_rad">Bán kính giao (km)</label><input id="nb_rad" type="number" value="5" /></div>
+      </div>
+      <div class="row-actions"><button id="addBranch">+ Tạo chi nhánh</button></div>
+    </div>
+    <div class="card" id="editBranchCard" style="display: none; border: 2px solid var(--primary, #3b82f6);">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+      <h3 id="eb_title" style="margin: 0;">✏️ Chỉnh sửa chi nhánh</h3>
+      <button class="secondary" id="closeEditBranchBtn" style="padding: 0.2rem 0.5rem;">❌ Đóng</button>
+    </div>
+    
+    <input type="hidden" id="eb_id" /> <div class="grid grid-2">
+      <div><label for="eb_name">Tên</label><input id="eb_name" /></div>
+      <div><label for="eb_addr">Địa chỉ</label><input id="eb_addr" /></div>
+      <div><label for="eb_lat">Vĩ độ</label><input id="eb_lat" type="number" step="0.0000001" /></div>
+      <div><label for="eb_lng">Kinh độ</label><input id="eb_lng" type="number" step="0.0000001" /></div>
+      <div><label for="eb_rad">Bán kính giao (km)</label><input id="eb_rad" type="number" step="0.1" /></div>
+    </div>
+    
+      <div class="row-actions"><button id="saveBranchBtn">💾 Lưu thay đổi</button></div>
+    </div>
+  </section>
+  <section id="tab-users" class="tab-panel">
+    
+    <div class="card">
+      <h2>➕ Thêm tài khoản mới</h2>
+      <div class="grid grid-2">
+        <div><label for="nu_name">Họ tên *</label><input id="nu_name" placeholder="Nguyễn Văn A" /></div>
+        <div><label for="nu_phone">Số điện thoại *</label><input id="nu_phone" placeholder="090..." /></div>
+        <div><label for="nu_email">Email</label><input id="nu_email" type="email" /></div>
+        <div><label for="nu_pass">Mật khẩu tạm thời *</label><input id="nu_pass" type="password" /></div>
+        <div>
+          <label for="nu_role">Vai trò *</label>
+          <select id="nu_role">
+            </select>
+        </div>
+        <div>
+          <label for="nu_branch">Chi nhánh (nếu có)</label>
+          <select id="nu_branch">
+            <option value="">-- Không chọn --</option>
+          </select>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button id="addUserBtn">🚀 Tạo tài khoản</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>👥 Người dùng (UC-11) — khóa/mở</h2>
+      <div class="filter-bar">
+        <input id="userSearch" placeholder="🔎 Tìm theo tên/SĐT/email" aria-label="Tìm người dùng" />
+        <select id="userRole"><option value="">Tất cả vai trò</option></select>
+        <select id="userStatus">
+          <option value="">Tất cả trạng thái</option>
+          <option value="1">Đang mở</option>
+          <option value="0">Đã khóa</option>
+        </select>
+      </div>
+      <div id="users"></div>
+    </div>
+    
+  </section>
+  <section id="tab-audit" class="tab-panel">
+    <div class="card">
+      <h2>📜 Nhật ký kiểm toán (UC-14)</h2>
+      <div class="filter-bar">
+        <input id="auditSearch" placeholder="🔎 Tìm theo hành động/module" />
+        <select id="auditModule"><option value="">Tất cả module</option></select>
+      </div>
+      <div id="audit"></div>
+    </div>
+  </section>
+</div>
+<script src="/js/api.js"></script>
+<script>
+const u = requireLogin();
+if (u) document.getElementById('who').textContent = u.full_name + ' · ' + (u.role_code || u.role);
+document.getElementById('logoutBtn').onclick = logout;
+let allUsers = [], allLogs = [];
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+  };
+});
+function showMsg(html) {
+  document.getElementById('msg').innerHTML = html || '';
+  if (html) setTimeout(() => document.getElementById('msg').innerHTML = '', 5000);
+}
+function formatDateTime(dateString) {
+  if (!dateString) return '';
+  const d = new Date(dateString);
+  return d.toLocaleString('vi-VN', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+}
+async function loadCfg() {
+  const { config } = await api('/admin/config');
+  document.getElementById('cfg').innerHTML = '<div class="table-wrap"><table><thead><tr><th>Khóa</th><th>Giá trị</th><th>Mô tả</th></tr></thead><tbody>' +
+    config.map(c => '<tr><td><code>' + escapeHtml(c.config_key) + '</code></td><td>' + escapeHtml(c.config_value) + '</td><td>' + escapeHtml(c.description || '') + '</td></tr>').join('') +
+    '</tbody></table></div>';
+}
+
+async function loadBranches() {
+  const { branches } = await api('/admin/branches');
+  document.getElementById('branches').innerHTML = '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Tên</th><th>Địa chỉ</th><th>Bán kính</th><th>Hoạt động</th><th>Thao tác</th></tr></thead><tbody>' +
+    // Trong loadBranches() - đoạn map danh sách
+    branches.map(b => '<tr><td>' + b.id + '</td><td>' + escapeHtml(b.name) + '</td><td>' + escapeHtml(b.address) + '</td><td>' + b.delivery_radius_km + ' km</td>' +
+      '<td>' + (b.is_active ? '<span class="badge ok">Mở</span>' : '<span class="badge">Đóng</span>') + '</td>' +
+      '<td>' +
+        // Thêm nút Sửa vào đây
+        '<button class="secondary" onclick=\'openEditBranchModal(' + JSON.stringify(b) + ')\' style="padding:0.25rem 0.55rem; margin-right: 5px;">Sửa</button>' +
+        '<button class="secondary" data-toggleb="' + b.id + '" data-a="' + (b.is_active ? 0 : 1) + '" style="padding:0.25rem 0.55rem; margin-right: 5px;">' + (b.is_active ? 'Tạm đóng' : 'Mở lại') + '</button>' +
+        (b.is_active ? '<button data-forceclose="' + b.id + '" style="padding:0.25rem 0.55rem; background: var(--danger-bg); color: var(--danger); border: 1px solid currentColor;">Đóng khẩn cấp</button>' : '') +
+      '</td></tr>').join('') +
+    '</tbody></table></div>';
+    
+  // 1. Nút Tạm đóng/Mở lại thông thường (API PATCH)
+  document.querySelectorAll('[data-toggleb]').forEach(b => b.onclick = async () => {
+    const turnOff = !Number(b.dataset.a);
+    if (!await confirmModal((turnOff ? 'Tạm đóng' : 'Mở lại') + ' chi nhánh #' + b.dataset.toggleb + '?', { danger: turnOff })) return;
+    await api('/admin/branches/' + b.dataset.toggleb, { method:'PATCH', body:{ is_active: !!Number(b.dataset.a) } });
+    loadBranches();
+  });
+
+  // 2. Nút Đóng khẩn cấp - UC-11 (API POST)
+  document.querySelectorAll('[data-forceclose]').forEach(b => b.onclick = async () => {
+    const branchId = b.dataset.forceclose;
+    // Lưu ý: promptModal là hàm giả định bạn đã có sẵn ở frontend giống confirmModal
+    // Nếu chưa có, bạn có thể thay bằng prompt() mặc định của trình duyệt
+    const reason = prompt('Nhập lý do đóng cửa khẩn cấp chi nhánh #' + branchId + ':'); 
+    if (reason === null) return; // Người dùng ấn Cancel
+    
+    if (!await confirmModal('Bạn có chắc chắn muốn ĐÓNG CỬA KHẨN CẤP? Toàn bộ đơn hàng chưa giao sẽ bị HỦY và hoàn kho.', { danger: true })) return;
+    
+    try {
+      const res = await api('/admin/branches/' + branchId + '/force-close', { 
+        method: 'POST', 
+        body: { reason: reason || 'Sự cố khẩn cấp' } 
+      });
+      showMsg('<div class="msg ok">✓ Đã đóng cửa khẩn cấp. Hủy thành công ' + res.cancelled_orders + ' đơn hàng.</div>');
+      loadBranches();
+    } catch (e) {
+      showMsg('<div class="msg err">Lỗi đóng khẩn cấp: ' + escapeHtml(e.message) + '</div>');
+    }
+  });
+}
+
+function renderUsers() {
+  const search = document.getElementById('userSearch').value.trim().toLowerCase();
+  const role = document.getElementById('userRole').value;
+  const st = document.getElementById('userStatus').value;
+  let list = allUsers;
+  if (search) list = list.filter(x => (x.full_name + ' ' + x.phone + ' ' + (x.email || '')).toLowerCase().includes(search));
+  if (role) list = list.filter(x => x.role_code === role);
+  if (st !== '') list = list.filter(x => String(x.is_active) === st);
+  document.getElementById('users').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Họ tên</th><th>SĐT</th><th>Email</th><th>Vai trò</th><th>CN</th><th>TT</th><th></th></tr></thead><tbody>' +
+      list.map(x => '<tr><td>' + x.id + '</td><td>' + escapeHtml(x.full_name) + '</td><td>' + escapeHtml(x.phone) + '</td><td>' + escapeHtml(x.email || '') + '</td><td>' + x.role_code + '</td><td>' + (x.branch_id || '') + '</td>' +
+        '<td>' + (x.is_active ? '<span class="badge ok">Mở</span>' : '<span class="badge" style="background:var(--danger-bg);color:var(--danger)">Khóa</span>') + '</td>' +
+        '<td><button class="secondary" data-u="' + x.id + '" data-a="' + (x.is_active ? 0 : 1) + '" style="padding:0.25rem 0.55rem">' + (x.is_active ? 'Khóa' : 'Mở') + '</button></td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">🔍</span>Không có người dùng phù hợp</p>';
+  document.querySelectorAll('[data-u]').forEach(b => b.onclick = async () => {
+    const lock = !Number(b.dataset.a);
+    const reason = await promptModal({ title: lock ? 'Khóa tài khoản' : 'Mở tài khoản', label: 'Lý do', defaultValue: 'Quản trị' });
+    if (reason === null) return;
+    await api('/admin/users/' + b.dataset.u, { method:'PATCH', body:{ is_active: !!Number(b.dataset.a), reason } });
+    await loadUsers();
+  });
+}
+async function loadUsers() {
+  const { users } = await api('/admin/users');
+  allUsers = users;
+  const roles = [...new Set(users.map(u => u.role_code))];
+  const sel = document.getElementById('userRole');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Tất cả vai trò</option>' + roles.map(r => '<option value="' + r + '"' + (r === cur ? ' selected' : '') + '>' + r + '</option>').join('');
+  renderUsers();
+}
+['userSearch','userRole','userStatus'].forEach(id => document.getElementById(id).addEventListener('input', renderUsers));
+function renderAudit() {
+  const search = document.getElementById('auditSearch').value.trim().toLowerCase();
+  const mod = document.getElementById('auditModule').value;
+  let list = allLogs;
+  if (search) list = list.filter(l => ((l.action || '') + ' ' + (l.module || '') + ' ' + (l.detail || '')).toLowerCase().includes(search));
+  if (mod) list = list.filter(l => l.module === mod);
+  document.getElementById('audit').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>Thời điểm</th><th>User</th><th>Hành động</th><th>Module</th><th>Chi tiết</th><th>IP</th></tr></thead><tbody>' +
+      list.map(l => '<tr><td>' + formatDateTime(l.created_at) + '</td><td>' + (l.user_id || '') + '</td><td><span class="badge">' + l.action + '</span></td><td>' + (l.module || '') + '</td>' +
+      '<td><code style="font-size:0.75rem">' + escapeHtml((l.detail || '').slice(0, 120)) + '</code></td><td>' + escapeHtml(l.ip || '') + '</td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">🔍</span>Không có log phù hợp</p>';
+}
+async function loadAudit() {
+  const { logs } = await api('/admin/audit');
+  allLogs = logs;
+  const mods = [...new Set(logs.map(l => l.module).filter(Boolean))];
+  const sel = document.getElementById('auditModule');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Tất cả module</option>' + mods.map(m => '<option value="' + escapeHtml(m) + '"' + (m === cur ? ' selected' : '') + '>' + escapeHtml(m) + '</option>').join('');
+  renderAudit();
+}
+['auditSearch','auditModule'].forEach(id => document.getElementById(id).addEventListener('input', renderAudit));
+document.getElementById('saveCfg').onclick = async () => {
+  const k = document.getElementById('ck').value.trim();
+  const v = document.getElementById('cv').value;
+  if (!k) return showMsg('<div class="msg err">Vui lòng nhập khóa</div>');
+  try { await api('/admin/config', { method:'PATCH', body:{ key: k, value: v } });
+    showMsg('<div class="msg ok">✓ Đã lưu</div>'); loadCfg();
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+};
+document.getElementById('refreshMenus').onclick = async () => {
+  if (!await confirmModal('Chạy refresh khả dụng món cho tất cả chi nhánh?')) return;
+  try {
+    await withLoading('Đang làm mới...', async () => {
+      const r = await fetch('/api/system/refresh-menus', { method:'POST' });
+      const d = await r.json();
+      await alertModal('Đã làm mới menu cho ' + d.branches + ' chi nhánh');
+    });
+  } catch {}
+};
+document.getElementById('addBranch').onclick = async () => {
+  try {
+    await api('/admin/branches', { method:'POST', body:{
+      name: document.getElementById('nb_name').value, address: document.getElementById('nb_addr').value,
+      lat: Number(document.getElementById('nb_lat').value), lng: Number(document.getElementById('nb_lng').value),
+      delivery_radius_km: Number(document.getElementById('nb_rad').value) || 5, is_active: true,
+    }});
+    showMsg('<div class="msg ok">✓ Đã tạo chi nhánh</div>'); loadBranches();
+  } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
+};
+
+// Thêm vào đoạn script trong admin.html
+
+// Hàm bổ sung để load Roles và Branches vào Form thêm user
+async function loadFormOptions() {
+  // Gọi song song 2 API để lấy data thực tế
+  const [{ branches }, { roles }] = await Promise.all([
+    api('/admin/branches'),
+    api('/admin/roles')
+  ]);
+
+  // Load chi nhánh
+  document.getElementById('nu_branch').innerHTML += branches.map(b => 
+    `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+    
+  // Load vai trò (Hiển thị tên tiếng Việt cho thân thiện)
+  document.getElementById('nu_role').innerHTML = roles.map(r => 
+    `<option value="${r.id}">${escapeHtml(r.name_vi)} (${r.code})</option>`).join('');
+}
+
+// Hàm hiển thị Form và điền dữ liệu
+function openEditBranchModal(branch) {
+  // 1. Điền dữ liệu chi nhánh vào các ô input
+  document.getElementById('eb_id').value = branch.id;
+  document.getElementById('eb_title').innerHTML = '✏️ Sửa chi nhánh #' + branch.id;
+  document.getElementById('eb_name').value = branch.name || '';
+  document.getElementById('eb_addr').value = branch.address || '';
+  document.getElementById('eb_lat').value = branch.lat || '';
+  document.getElementById('eb_lng').value = branch.lng || '';
+  document.getElementById('eb_rad').value = branch.delivery_radius_km || '';
+
+  // 2. Hiện Card sửa và cuộn màn hình tới đó cho dễ nhìn
+  const editCard = document.getElementById('editBranchCard');
+  editCard.style.display = 'block';
+  editCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Logic nút Đóng
+document.getElementById('closeEditBranchBtn').onclick = () => {
+  document.getElementById('editBranchCard').style.display = 'none';
+};
+
+// Logic nút Lưu thay đổi
+document.getElementById('saveBranchBtn').onclick = async () => {
+  const id = document.getElementById('eb_id').value;
+  
+  // Gom dữ liệu từ form
+  const body = {
+    name: document.getElementById('eb_name').value.trim(),
+    address: document.getElementById('eb_addr').value.trim(),
+    lat: Number(document.getElementById('eb_lat').value) || null,
+    lng: Number(document.getElementById('eb_lng').value) || null,
+    delivery_radius_km: Number(document.getElementById('eb_rad').value) || null
+  };
+
+  try {
+    await withLoading('Đang cập nhật...', async () => {
+      // Gọi API PATCH /admin/branches/:id mà bạn đã làm ở backend
+      await api('/admin/branches/' + id, { method: 'PATCH', body });
+    });
+    
+    showMsg('<div class="msg ok">✓ Đã cập nhật chi nhánh #' + id + ' thành công!</div>');
+    document.getElementById('editBranchCard').style.display = 'none'; // Ẩn form đi
+    await loadBranches(); // Load lại bảng danh sách
+  } catch (e) {
+    showMsg('<div class="msg err">Lỗi cập nhật: ' + escapeHtml(e.message) + '</div>');
+  }
+};
+
+document.getElementById('addUserBtn').onclick = async () => {
+  const body = {
+    full_name: document.getElementById('nu_name').value.trim(),
+    phone: document.getElementById('nu_phone').value.trim(),
+    email: document.getElementById('nu_email').value.trim(),
+    password: document.getElementById('nu_pass').value,
+    role_id: document.getElementById('nu_role').value,
+    branch_id: document.getElementById('nu_branch').value
+  };
+
+  if(!body.full_name || !body.phone || !body.password) {
+    return showMsg('<div class="msg err">Vui lòng điền đủ các trường bắt buộc (*)</div>');
+  }
+
+  try {
+    await api('/admin/users', { method: 'POST', body });
+    showMsg('<div class="msg ok">✓ Đã tạo tài khoản thành công. Người dùng cần đổi mật khẩu ở lần đăng nhập tới.</div>');
+    // Reset form
+    ['nu_name', 'nu_phone', 'nu_email', 'nu_pass'].forEach(id => document.getElementById(id).value = '');
+    await loadUsers(); // Load lại danh sách bên dưới
+  } catch (e) {
+    showMsg('<div class="msg err">Lỗi: ' + escapeHtml(e.message) + '</div>');
+  }
+};
+
+// Gọi thêm loadFormOptions() trong hàm init()
+async function init() {
+  try { 
+    await loadCfg(); 
+    await loadBranches(); 
+    await loadUsers(); 
+    await loadAudit(); 
+    await loadFormOptions(); // Load option cho form thêm user
+  } catch (e) { 
+    showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); 
+  }
+}
+
+init();
+</script>
+</body>
+</html>

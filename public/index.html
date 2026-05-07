@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FastFood Chain — Vui vẻ cùng mỗi món</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>FastFood Chain</h1>
+    <span class="tag">Bữa ăn nhanh — Niềm vui trọn vẹn</span>
+  </div>
+  <a href="/api/system/meta">API meta</a>
+</header>
+<div class="layout">
+  <div class="hero">
+    <h1>Chào mừng đến FastFood Chain!</h1>
+    <p>Đặt hàng nhanh · Giao tận tay · Cười trọn ngày</p>
+    <div class="hero-foods" aria-hidden="true">
+      <span>🍔</span><span>🍟</span><span>🍗</span><span>🍕</span><span>🥤</span><span>🍦</span>
+    </div>
+  </div>
+
+  <div class="card" style="text-align:center;background:linear-gradient(135deg,#fff 0%,var(--surface-2) 100%)">
+    <h2 style="justify-content:center">🌟 Món ngon nổi bật</h2>
+    <div class="featured-grid">
+      <div class="featured"><img src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=320&h=240&fit=crop&auto=format" alt="Burger bò phô mai"/><div class="cap">Burger bò phô mai</div></div>
+      <div class="featured"><img src="https://images.unsplash.com/photo-1603496987674-79600a000f55?w=480&h=360&fit=crop&auto=format" alt="Gà rán giòn"/><div class="cap">Gà rán giòn</div></div>
+      <div class="featured"><img src="https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=320&h=240&fit=crop&auto=format" alt="Pizza pepperoni"/><div class="cap">Pizza pepperoni</div></div>
+      <div class="featured"><img src="https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=320&h=240&fit=crop&auto=format" alt="Khoai tây chiên"/><div class="cap">Khoai tây chiên</div></div>
+      <div class="featured"><img src="https://images.unsplash.com/photo-1624552184280-9e9631bbeee9?w=480&h=360&fit=crop&auto=format" alt="Coca Cola"/><div class="cap">Coca Cola</div></div>
+    </div>
+  </div>
+
+  <div class="card login-box">
+    <h2>Đăng nhập</h2>
+    <!-- <p class="tag" style="text-align:center">Dùng SĐT và mật khẩu. Demo seed: mật khẩu <code>Demo@123</code></p> -->
+    <div id="msg" aria-live="polite"></div>
+    <form id="loginForm" autocomplete="on" novalidate>
+      <label for="phone">Số điện thoại</label>
+      <input id="phone" name="phone" type="tel" inputmode="tel" placeholder="0902000001" autocomplete="username" required />
+      <label for="password">Mật khẩu</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <div class="row-actions" style="margin-top:1rem;justify-content:center">
+        <button type="submit" id="btnLogin" style="min-width:180px">Đăng nhập</button>
+      </div>
+    </form>
+    <p style="margin-top:1.25rem;font-size:0.9rem;text-align:center">
+      Chưa có tài khoản? <a href="/register.html">Đăng ký khách hàng</a>
+    </p>
+    <!-- <details style="margin-top:1.25rem">
+      <summary class="tag" style="cursor:pointer;text-align:center">📋 Tài khoản demo</summary>
+      <table style="margin-top:0.5rem;font-size:0.82rem">
+        <thead><tr><th>Vai trò</th><th>SĐT</th></tr></thead>
+        <tbody>
+          <tr><td>👤 Khách hàng</td><td><code>0902000001</code></td></tr>
+          <tr><td>🛡️ Admin</td><td><code>0901000001</code></td></tr>
+          <tr><td>🏢 Quản lý chuỗi</td><td><code>0901000002</code></td></tr>
+          <tr><td>📦 Quản lý kho tổng</td><td><code>0901000003</code></td></tr>
+          <tr><td>🏬 QL chi nhánh Q1</td><td><code>0901000004</code></td></tr>
+          <tr><td>👨‍🍳 Đầu bếp Q1</td><td><code>0901000005</code></td></tr>
+        </tbody>
+      </table>
+    </details> -->
+  </div>
+
+  <!-- <h2 style="font-size:1.1rem;margin:2rem 0 1rem;color:var(--primary);text-align:center">🚀 Cổng theo vai trò</h2>
+  <div class="portal-grid">
+    <a class="portal-card" href="/customer.html"><strong>👤 Khách hàng</strong>Thực đơn, giỏ, đặt hàng, theo dõi đơn</a>
+    <a class="portal-card" href="/admin.html"><strong>🛡️ Admin</strong>Cấu hình, chi nhánh, người dùng, audit</a>
+    <a class="portal-card" href="/chain.html"><strong>🏢 Quản lý chuỗi</strong>Thực đơn, BOM, voucher, báo cáo</a>
+    <a class="portal-card" href="/warehouse.html"><strong>📦 Kho tổng</strong>NCC, PO, tồn kho, duyệt xuất</a>
+    <a class="portal-card" href="/branch.html"><strong>🏬 Chi nhánh</strong>Dashboard, xác nhận đơn, kho, gọi ship</a>
+    <a class="portal-card" href="/kitchen.html"><strong>👨‍🍳 Bếp (KDS)</strong>Tiếp nhận, nấu, đóng gói</a>
+  </div> -->
+</div>
+<script src="/js/api.js"></script>
+<script>
+const roleHome = {
+  CUSTOMER:'/customer.html', ADMIN:'/admin.html', CHAIN_MANAGER:'/chain.html',
+  WAREHOUSE_MANAGER:'/warehouse.html', BRANCH_MANAGER:'/branch.html', KITCHEN_STAFF:'/kitchen.html'
+};
+async function doLogin(e){
+  if (e) e.preventDefault();
+  const msg = document.getElementById('msg'); msg.innerHTML = '';
+  const phone = document.getElementById('phone').value.trim();
+  const password = document.getElementById('password').value;
+  if (!phone) return msg.innerHTML = '<div class="msg err">Vui lòng nhập số điện thoại</div>';
+  if (!password) return msg.innerHTML = '<div class="msg err">Vui lòng nhập mật khẩu</div>';
+  const btn = document.getElementById('btnLogin');
+  btn.disabled = true; const oldText = btn.textContent; btn.textContent = 'Đang đăng nhập...';
+  try {
+    const data = await api('/auth/login', { method:'POST', body:{ phone, password } });
+    setToken(data.token); setUser(data.user);
+    msg.innerHTML = '<div class="msg ok">✓ Đăng nhập thành công, đang chuyển hướng...</div>';
+    const r = data.user.role_code || data.user.role;
+    setTimeout(() => location.href = roleHome[r] || '/customer.html', 350);
+  } catch (e) {
+    msg.innerHTML = '<div class="msg err">' + escapeHtml(e.message) + '</div>';
+  } finally {
+    btn.disabled = false; btn.textContent = oldText;
+  }
+}
+document.getElementById('loginForm').addEventListener('submit', doLogin);
+</script>
+</body>
+</html>

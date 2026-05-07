@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kho tổng — FastFood Chain</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div><h1>Quản lý kho tổng</h1><span class="tag" id="who"></span></div>
+  <div class="row-actions">
+    <button class="secondary" type="button" id="logoutBtn">Đăng xuất</button>
+    <a class="btn secondary" href="/" style="text-decoration:none">Trang chủ</a>
+  </div>
+</header>
+<div class="layout">
+  <div id="msg" aria-live="polite"></div>
+  <div class="tabs">
+    <button class="active" data-tab="inv">📦 Tồn kho TT</button>
+    <button data-tab="req">📥 Phiếu xin hàng</button>
+    <button data-tab="ob">🚚 Phiếu xuất</button>
+    <button data-tab="po">🛒 Đặt mua NCC</button>
+    <button data-tab="sup">🏭 NCC</button>
+    <button data-tab="thr">⚖️ Ngưỡng tồn</button>
+  </div>
+  <section id="tab-inv" class="tab-panel active">
+    <div class="card">
+      <h2>📦 Tồn kho trung tâm (UC-20)</h2>
+      <p class="tag">Đỏ = dưới mức an toàn (UC-23). Cam = dưới điểm đặt hàng (UC-39).</p>
+      <div class="filter-bar">
+        <input id="invSearch" placeholder="🔎 Tìm nguyên liệu" />
+        <select id="invFilter">
+          <option value="">Tất cả</option>
+          <option value="low">Dưới an toàn</option>
+          <option value="reord">Cần đặt thêm</option>
+        </select>
+      </div>
+      <div id="inv"></div>
+    </div>
+  </section>
+  <section id="tab-req" class="tab-panel">
+    <div class="card">
+      <h2>📥 Phiếu xin hàng từ chi nhánh (UC-21)</h2>
+      
+      <div class="filter-bar" style="margin-bottom: 1rem;">
+        <select id="reqFilter">
+          <option value="pending">⏳ Đang chờ xử lý</option>
+          <option value="history">📜 Lịch sử (Đã duyệt / Từ chối)</option>
+        </select>
+      </div>
+
+      <div id="reqs"></div>
+    </div>
+  </section>
+
+  <section id="tab-ob" class="tab-panel">
+    <div class="card">
+      <h2>🚚 Phiếu xuất kho (UC-25)</h2>
+      
+      <div class="filter-bar" style="margin-bottom: 1rem;">
+        <select id="obFilter">
+          <option value="pending">⏳ Chờ xuất xe</option>
+          <option value="history">📜 Lịch sử (Đã xuất)</option>
+        </select>
+      </div>
+
+      <div id="outbounds"></div>
+    </div>
+  </section>
+  <section id="tab-po" class="tab-panel">
+    <div class="card">
+      <h2>🛒 Tạo đơn đặt mua NCC (UC-22)</h2>
+      <div class="grid grid-2"><div><label for="po_sup">Nhà cung cấp</label><select id="po_sup"></select></div></div>
+      <div id="poLines"><p class="tag">Bấm "+ Dòng nguyên liệu" để bắt đầu.</p></div>
+      <div class="row-actions">
+        <button class="secondary" type="button" id="addPoLine">+ Dòng nguyên liệu</button>
+        <button id="createPo">Tạo PO</button>
+      </div>
+    </div>
+    <div class="card"><h3>Lịch sử PO</h3><div id="poList"></div></div>
+  </section>
+  <section id="tab-sup" class="tab-panel">
+    <div class="card">
+      <h2>🏭 Nhà cung cấp</h2>
+      <div id="suppliers"></div>
+      <h3>+ Thêm NCC</h3>
+      <div class="grid grid-2">
+        <div><label for="ns_name">Tên</label><input id="ns_name" /></div>
+        <div><label for="ns_tax">Mã số thuế</label><input id="ns_tax" /></div>
+        <div><label for="ns_contact">Liên hệ</label><input id="ns_contact" /></div>
+      </div>
+      <div class="row-actions"><button id="addSup">Thêm</button></div>
+    </div>
+  </section>
+  <section id="tab-thr" class="tab-panel">
+    <div class="card">
+      <h2>⚖️ Ngưỡng tồn nguyên liệu (UC-24, UC-39)</h2>
+      <div id="thrTable"></div>
+    </div>
+  </section>
+</div>
+<script src="/js/api.js"></script>
+<script>
+const u = requireLogin();
+if (u) document.getElementById('who').textContent = u.full_name + ' · ' + (u.role_code || u.role);
+document.getElementById('logoutBtn').onclick = logout;
+let suppliers = [], ingredients = [], allInv = [];
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+    if (b.dataset.tab === 'po') loadPos();
+    if (b.dataset.tab === 'sup') loadSuppliers();
+    if (b.dataset.tab === 'thr') loadThr();
+  };
+});
+function showMsg(html) {
+  document.getElementById('msg').innerHTML = html || '';
+  if (html) setTimeout(() => document.getElementById('msg').innerHTML = '', 5000);
+}
+function formatDateTime(dateString) {
+  if (!dateString) return '';
+  const d = new Date(dateString);
+  return d.toLocaleString('vi-VN', { 
+    hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
+  });
+}
+function renderInv() {
+  const search = document.getElementById('invSearch').value.trim().toLowerCase();
+  const filt = document.getElementById('invFilter').value;
+  let list = allInv;
+  if (search) list = list.filter(i => i.name.toLowerCase().includes(search));
+  if (filt === 'low') list = list.filter(i => Number(i.quantity) < Number(i.safety_stock_min));
+  if (filt === 'reord') list = list.filter(i => { const q = Number(i.quantity); return q >= Number(i.safety_stock_min) && q < Number(i.reorder_point); });
+  document.getElementById('inv').innerHTML = list.length
+    ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn</th><th>An toàn</th><th>Điểm đặt</th><th>Trạng thái</th></tr></thead><tbody>' +
+      list.map(i => {
+        const q = Number(i.quantity); let badge;
+        if (q < Number(i.safety_stock_min)) badge = '<span class="badge" style="background:var(--danger-bg);color:var(--danger)">Dưới an toàn</span>';
+        else if (q < Number(i.reorder_point)) badge = '<span class="badge warn">Cần đặt thêm</span>';
+        else badge = '<span class="badge ok">Đủ</span>';
+        return '<tr><td>' + escapeHtml(i.name) + '</td><td>' + q.toLocaleString('vi-VN') + ' ' + i.unit + '</td><td>' + i.safety_stock_min + '</td><td>' + i.reorder_point + '</td><td>' + badge + '</td></tr>';
+      }).join('') + '</tbody></table></div>'
+    : '<p class="empty"><span class="icon">🔍</span>Không có nguyên liệu phù hợp</p>';
+}
+async function loadInv() {
+  const { inventory } = await api('/warehouse/central-inventory');
+  allInv = inventory;
+  renderInv();
+}
+['invSearch','invFilter'].forEach(id => document.getElementById(id).addEventListener('input', renderInv));
+// --- XỬ LÝ PHIẾU XIN HÀNG ---
+async function loadRequests() {
+  const filter = document.getElementById('reqFilter').value;
+  const { requests } = await api('/warehouse/stock-requests?filter=' + filter);
+  const isHistory = filter === 'history';
+
+  document.getElementById('reqs').innerHTML = requests.length
+    ? requests.map(r => {
+        // Luôn hiển thị nút Xem chi tiết
+        let actionButtons = `<button class="secondary" onclick="openDetail(${r.id})" style="padding:0.3rem 0.7rem">Xem chi tiết</button>`;
+        
+        // Nếu chưa xử lý thì mới hiện thêm nút Từ chối
+        if (!isHistory) {
+          actionButtons += `<button class="danger" data-reject="${r.id}" style="padding:0.3rem 0.7rem; margin-left:0.5rem">Từ chối</button>`;
+        }
+
+        return `<div class="card" style="padding:0.85rem;margin-bottom:0.6rem">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;align-items:center">
+            <div><strong>Phiếu #${r.id}</strong> — ${escapeHtml(r.branch_name)}
+            <small class="tag">🕒 ${formatDateTime(r.created_at)}</small>
+            ${r.is_urgent ? ' <span class="badge warn">⚡ Khẩn</span>' : ''} 
+            <span class="badge">${r.status}</span></div>
+            <div class="row-actions" style="margin:0">${actionButtons}</div>
+          </div>
+        </div>`;
+      }).join('')
+    : '<p class="empty">Không có phiếu nào</p>';
+  
+  // Gán sự kiện cho các nút từ chối
+  document.querySelectorAll('[data-reject]').forEach(b => b.onclick = async () => {
+    const reason = await promptModal({ title: 'Từ chối phiếu', label: 'Lý do', defaultValue: 'Hết hàng' });
+    if (reason) {
+      await api('/warehouse/stock-requests/' + b.dataset.reject + '/resolve', { method:'POST', body:{ approve: false, reason } });
+      loadRequests();
+    }
+  });
+}
+
+async function openDetail(id) {
+  const { request, lines } = await api('/warehouse/stock-requests/' + id);
+  // Kiểm tra xem phiếu có thể duyệt được không
+  const canApprove = ['NEEDS_MANUAL', 'NEW'].includes(request.status);
+  
+  const rows = lines.map(l => {
+    const qtyDisp = canApprove 
+      ? `<input type="number" data-line="${l.ingredient_id}" value="${l.qty_requested}" min="0" />`
+      : `<strong>${l.qty_approved || 0}</strong>`; // Nếu xong rồi thì chỉ hiện số
+      
+    return `<tr><td>${escapeHtml(l.name)}</td><td>${l.qty_requested}</td><td>${qtyDisp}</td></tr>`;
+  }).join('');
+
+  showModal(`<h3>Phiếu #${request.id} ${request.is_urgent ? ' — ⚡ KHẨN' : ''}</h3>
+    <p class="tag">Trạng thái: <strong>${request.status}</strong></p>
+    ${request.reject_reason ? `<p class="msg err" style="margin-bottom:1rem">Lý do từ chối: ${escapeHtml(request.reject_reason)}</p>` : ''}
+    <div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Yêu cầu</th><th>Duyệt</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
+      <button class="secondary" onclick="closeModal()">Đóng</button>
+      ${canApprove ? `<button onclick="approveDetail(${id})">✓ Xác nhận duyệt</button>` : ''}
+    </div>`);
+}
+
+// Lắng nghe sự kiện thay đổi bộ lọc
+document.getElementById('reqFilter').addEventListener('change', loadRequests);
+
+
+
+window.approveDetail = async function(id) {
+  const lines = [];
+  document.querySelectorAll('[data-line]').forEach(i => lines.push({ ingredient_id: Number(i.dataset.line), qty_approved: Number(i.value) }));
+  try {
+    const r = await api('/warehouse/stock-requests/' + id + '/resolve', { method:'POST', body:{ approve: true, lines } });
+    closeModal();
+    await alertModal('Đã duyệt. Phiếu xuất ID: ' + r.outbound_id);
+    loadRequests(); loadOutbounds();
+  } catch (e) { alertModal(e.message); }
+};
+// --- XỬ LÝ PHIẾU XUẤT KHO ---
+async function loadOutbounds() {
+  const filter = document.getElementById('obFilter').value;
+  const { outbounds } = await api('/warehouse/outbounds?filter=' + filter);
+  const isHistory = filter === 'history';
+  
+  document.getElementById('outbounds').innerHTML = outbounds.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Mã phiếu</th><th>Chi nhánh</th><th>Ngày tạo</th><th>Thao tác</th></tr></thead><tbody>` +
+      outbounds.map(o => `<tr>
+        <td><strong>${escapeHtml(o.code)}</strong></td>
+        <td>#${o.branch_id}</td>
+        <td>${formatDateTime(o.created_at)}</td>
+        <td>
+          <button class="secondary" onclick="viewObDetail(${o.id})" style="padding:0.25rem 0.5rem">Xem chi tiết</button>
+          ${!isHistory ? `<button data-ship="${o.id}" style="padding:0.25rem 0.5rem; margin-left:0.5rem">🚚 Xuất xe</button>` : ''}
+        </td>
+      </tr>`).join('') + '</tbody></table></div>'
+    : '<p class="empty">Không có phiếu xuất nào</p>';
+  
+  // Gán sự kiện xuất xe
+  document.querySelectorAll('[data-ship]').forEach(b => b.onclick = async () => {
+    const trip = await promptModal({ title: 'Xuất xe', label: 'Mã chuyến', defaultValue: 'XE-' + Date.now() });
+    if (trip) {
+      await withLoading('Đang xử lý...', () => api('/warehouse/outbounds/' + b.dataset.ship + '/ship', { method:'POST', body:{ trip_code: trip } }));
+      loadOutbounds(); loadInv();
+    }
+  });
+}
+
+async function viewObDetail(id) {
+  const { outbound, lines } = await api('/warehouse/outbounds/' + id);
+  const rows = lines.map(l => `<tr><td>${escapeHtml(l.name)}</td><td>${l.quantity} ${l.unit}</td></tr>`).join('');
+  
+  showModal(`<h3>Chi tiết phiếu xuất: ${outbound.code}</h3>
+    <div class="kpi-grid" style="margin-bottom:1rem">
+      <div class="kpi"><div class="l">Chi nhánh</div><div class="v" style="font-size:1rem">${escapeHtml(outbound.branch_name)}</div></div>
+      <div class="kpi"><div class="l">Trạng thái</div><div class="v" style="font-size:1rem">${outbound.status}</div></div>
+      ${outbound.trip_code ? `<div class="kpi"><div class="l">Chuyến xe</div><div class="v" style="font-size:1rem">${outbound.trip_code}</div></div>` : ''}
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Số lượng thực xuất</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
+      <button class="secondary" onclick="closeModal()">Đóng</button>
+    </div>`);
+}
+
+// Lắng nghe sự kiện thay đổi bộ lọc
+document.getElementById('obFilter').addEventListener('change', loadOutbounds);
+async function loadSuppliers() {
+  const r = await api('/warehouse/suppliers'); suppliers = r.suppliers;
+  document.getElementById('suppliers').innerHTML = suppliers.length
+    ? '<table><thead><tr><th>ID</th><th>Tên</th><th>MST</th><th>Liên hệ</th></tr></thead><tbody>' +
+      suppliers.map(s => '<tr><td>' + s.id + '</td><td>' + escapeHtml(s.name) + '</td><td>' + escapeHtml(s.tax_code || '') + '</td><td>' + escapeHtml(s.contact || '') + '</td></tr>').join('') + '</tbody></table>'
+    : '<p class="tag">Chưa có nhà cung cấp</p>';
+  document.getElementById('po_sup').innerHTML = suppliers.map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
+}
+document.getElementById('addSup').onclick = async () => {
+  const name = document.getElementById('ns_name').value.trim();
+  if (!name) return showMsg('<div class="msg err">Vui lòng nhập tên</div>');
+  await api('/warehouse/suppliers', { method:'POST', body:{
+    name, tax_code: document.getElementById('ns_tax').value, contact: document.getElementById('ns_contact').value,
+  }});
+  ['ns_name','ns_tax','ns_contact'].forEach(id => document.getElementById(id).value = '');
+  showMsg('<div class="msg ok">✓ Đã thêm NCC</div>');
+  loadSuppliers();
+};
+function ingOpts() { return ingredients.map(i => '<option value="' + i.id + '">' + escapeHtml(i.name) + ' (' + i.unit + ')</option>').join(''); }
+document.getElementById('addPoLine').onclick = () => {
+  if (!ingredients.length) return alertModal('Đang tải nguyên liệu...');
+  const el = document.getElementById('poLines');
+  if (el.querySelector('p.tag')) el.innerHTML = '';
+  const div = document.createElement('div'); div.className = 'row-actions'; div.style.alignItems = 'flex-end'; div.dataset.pol = 1;
+  div.innerHTML = '<div style="flex:1"><label>Nguyên liệu</label><select data-ing>' + ingOpts() + '</select></div>' +
+    '<div style="width:120px"><label>SL</label><input type="number" data-qty value="1000" min="1" /></div>' +
+    '<div style="width:140px"><label>Đơn giá</label><input type="number" data-price value="1000" min="0" /></div>' +
+    '<button class="secondary" type="button" onclick="this.parentElement.remove()" aria-label="Xóa">✕</button>';
+  el.appendChild(div);
+};
+document.getElementById('createPo').onclick = async () => {
+  const lines = [];
+  document.querySelectorAll('[data-pol]').forEach(d => lines.push({
+    ingredient_id: Number(d.querySelector('[data-ing]').value),
+    qty_ordered: Number(d.querySelector('[data-qty]').value),
+    unit_price: Number(d.querySelector('[data-price]').value),
+  }));
+  if (!lines.length) return alertModal('Cần ít nhất 1 dòng');
+  if (!await confirmModal('Tạo PO ' + lines.length + ' dòng?')) return;
+  try {
+    const r = await api('/warehouse/purchase-orders', { method:'POST', body:{ supplier_id: Number(document.getElementById('po_sup').value), lines } });
+    await alertModal('Đã tạo PO #' + r.id + ' — tổng: ' + vnd(r.total));
+    document.getElementById('poLines').innerHTML = '<p class="tag">Bấm "+ Dòng nguyên liệu" để bắt đầu.</p>';
+    loadPos();
+  } catch (e) { alertModal(e.message); }
+};
+async function loadPos() {
+  const { purchase_orders } = await api('/warehouse/purchase-orders');
+  document.getElementById('poList').innerHTML = purchase_orders.length
+    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Ngày đặt</th><th>NCC</th><th>Tổng</th><th>Trạng thái</th><th></th></tr></thead><tbody>' +
+      purchase_orders.map(p => '<tr><td>#' + p.id + '</td><td>' + formatDateTime(p.created_at) + '</td><td>' + escapeHtml(p.supplier_name) + '</td><td>' + vnd(p.total_amount) + '</td>' +
+        '<td><span class="badge ' + (p.status === 'RECEIVED' ? 'ok' : 'warn') + '">' + p.status + '</span></td>' +
+        '<td>' + (p.status !== 'RECEIVED' ? '<button class="secondary" data-recv="' + p.id + '" style="padding:0.25rem 0.7rem">📥 Nhập kho</button>' : '') + '</td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="tag">Chưa có PO</p>';
+  document.querySelectorAll('[data-recv]').forEach(b => b.onclick = async () => {
+    const { purchase_order, lines } = await api('/warehouse/purchase-orders/' + b.dataset.recv);
+    const rows = lines.map(l => '<tr><td>' + escapeHtml(l.name) + '</td><td>' + l.qty_ordered + ' ' + l.unit + '</td><td><input type="number" data-line="' + l.ingredient_id + '" value="' + l.qty_ordered + '" min="0" /></td></tr>').join('');
+    showModal('<h3>📥 Nhập kho PO #' + purchase_order.id + '</h3>' +
+      '<p class="tag">Điều chỉnh số lượng thực nhận nếu khác đơn đặt.</p>' +
+      '<table><thead><tr><th>Nguyên liệu</th><th>Đặt</th><th>Thực nhận</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div class="row-actions" style="margin-top:1rem;justify-content:flex-end">' +
+      '<button class="secondary" onclick="closeModal()">Hủy</button>' +
+      '<button onclick="recvPo(' + purchase_order.id + ')">✓ Xác nhận nhập</button></div>');
+  });
+}
+window.recvPo = async function(id) {
+  const lines = [];
+  document.querySelectorAll('[data-line]').forEach(i => lines.push({ ingredient_id: Number(i.dataset.line), qty_received: Number(i.value) }));
+  try {
+    await api('/warehouse/purchase-orders/' + id + '/receive', { method:'POST', body:{ lines } });
+    closeModal();
+    await alertModal('Đã nhập kho');
+    loadPos(); loadInv();
+  } catch (e) { alertModal(e.message); }
+};
+async function loadThr() {
+  document.getElementById('thrTable').innerHTML = '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>An toàn</th><th>Điểm đặt</th><th></th></tr></thead><tbody>' +
+    ingredients.map(i => '<tr><td>' + escapeHtml(i.name) + ' (' + i.unit + ')</td>' +
+      '<td><input type="number" data-min="' + i.id + '" value="' + i.safety_stock_min + '" style="width:120px" /></td>' +
+      '<td><input type="number" data-reord="' + i.id + '" value="' + i.reorder_point + '" style="width:120px" /></td>' +
+      '<td><button class="secondary" data-savet="' + i.id + '" style="padding:0.25rem 0.55rem">💾 Lưu</button></td></tr>').join('') +
+    '</tbody></table></div>';
+  document.querySelectorAll('[data-savet]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.savet;
+    await api('/warehouse/ingredients/' + id + '/thresholds', { method:'PATCH', body:{
+      safety_stock_min: Number(document.querySelector('[data-min="' + id + '"]').value),
+      reorder_point: Number(document.querySelector('[data-reord="' + id + '"]').value),
+    }});
+    showMsg('<div class="msg ok">✓ Đã lưu</div>'); loadInv();
+  });
+}
+async function init() {
+  const ing = await api('/warehouse/ingredients'); ingredients = ing.ingredients;
+  loadInv(); loadRequests(); loadOutbounds(); loadSuppliers();
+}
+init();
+setInterval(loadRequests, 30000);
+</script>
+</body>
+</html>
