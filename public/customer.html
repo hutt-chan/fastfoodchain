@@ -10,7 +10,7 @@
 <header class="top">
   <div><h1>Cổng khách hàng</h1><span class="tag" id="who"></span></div>
   <div class="row-actions">
-    <button class="secondary" type="button" id="profileBtn">👤 Hồ sơ</button>
+    <button class="secondary" type="button" id="profileBtn">Hồ sơ</button>
     <button class="secondary" type="button" id="logoutBtn">Đăng xuất</button>
     <a class="btn secondary" href="/" style="text-decoration:none">Trang chủ</a>
   </div>
@@ -42,9 +42,11 @@
         <h2>🛒 2. Giỏ hàng</h2>
         <div id="cart"></div>
         <div id="totals" class="kpi-grid" style="margin-top:0.75rem"></div>
-        <label for="vcode" style="margin-top:0.85rem">Mã voucher</label>
+        <label for="voucherSel" style="margin-top:0.85rem">Mã voucher</label>
         <div class="row-actions">
-          <input id="vcode" name="vcode" style="flex:1" placeholder="VD: WELCOME10" />
+          <select id="voucherSel" style="flex:1">
+            <option value="">— Chọn mã giảm giá —</option>
+          </select>
           <button type="button" class="secondary" id="applyV">Áp dụng</button>
           <button type="button" class="secondary" id="clearV" title="Bỏ voucher" aria-label="Bỏ voucher">✕</button>
         </div>
@@ -59,13 +61,13 @@
           <option value="COD">💵 COD — tiền mặt khi nhận</option>
           <option value="ONLINE">💳 Online (mock thành công)</option>
         </select>
-        <div class="row-actions"><button type="button" id="checkout">🛍️ Đặt hàng</button></div>
+        <div class="row-actions"><button type="button" id="checkout">Đặt hàng</button></div>
       </div>
     </div>
     <div class="card">
       <h2>🍽️ 3. Thực đơn chi nhánh</h2>
       <div class="filter-bar">
-        <input id="menuSearch" placeholder="🔎 Tìm món..." aria-label="Tìm món" />
+        <input id="menuSearch" placeholder="Tìm món..." aria-label="Tìm món" />
         <select id="menuCat"><option value="">Tất cả danh mục</option></select>
       </div>
       <div id="menu"><p class="empty"><span class="icon">🏪</span>Vui lòng chọn chi nhánh để xem thực đơn</p></div>
@@ -145,6 +147,7 @@ async function selectBranch(id, info) {
   voucherId = null; discount = 0;
   document.getElementById('vinfo').textContent = '';
   await loadMenu();
+  await loadVouchers();
   await loadCart();
 }
 document.getElementById('branchSel').onchange = (e) => {
@@ -188,7 +191,25 @@ document.getElementById('useGps').onclick = () => {
     showMsg('<div class="msg err">Không lấy được vị trí GPS</div>'); 
   });
 };
-
+async function loadVouchers() {
+  const sel = document.getElementById('voucherSel');
+  sel.innerHTML = '<option value="">— Chọn mã giảm giá —</option>';
+  if (!branchId) return;
+  
+  try {
+    const { vouchers } = await api('/vouchers?branch_id=' + branchId);
+    if (vouchers && vouchers.length > 0) {
+      sel.innerHTML += vouchers.map(v => {
+        const desc = v.discount_type === 'PERCENT' 
+          ? `Giảm ${Number(v.discount_value)}%` 
+          : `Giảm ${vnd(v.discount_value)}`;
+        return `<option value="${escapeHtml(v.code)}">${escapeHtml(v.code)} — ${desc} (Đơn từ ${vnd(v.min_order_amount)})</option>`;
+      }).join('');
+    }
+  } catch (e) {
+    console.error('Lỗi tải danh sách voucher:', e);
+  }
+}
 function renderMenu() {
   const search = document.getElementById('menuSearch').value.trim().toLowerCase();
   const cat = document.getElementById('menuCat').value;
@@ -220,12 +241,7 @@ function renderMenu() {
     }).join('') + '</div>'
   ).join('');
   document.querySelectorAll('[data-add]').forEach(b => {
-    b.onclick = async () => {
-      try {
-        await api('/cart/items', { method:'POST', body:{ branch_id: branchId, product_id: Number(b.dataset.add), quantity: 1 } });
-        loadCart();
-      } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
-    };
+    b.onclick = () => addToCartWithToppings(Number(b.dataset.add), b.getAttribute('aria-label').replace('Thêm ', '').replace(' vào giỏ', ''));
   });
 }
 async function loadMenu() {
@@ -239,55 +255,161 @@ async function loadMenu() {
 }
 document.getElementById('menuSearch').addEventListener('input', renderMenu);
 document.getElementById('menuCat').addEventListener('change', renderMenu);
+
 async function loadCart() {
   if (!branchId) {
-    document.getElementById('cart').innerHTML = '<p class="empty"><span class="icon">🛒</span>Chọn chi nhánh trước</p>';
-    document.getElementById('totals').innerHTML = ''; return;
+    document.getElementById('cart').innerHTML =
+      '<p class="empty"><span class="icon">🛒</span>Chọn chi nhánh trước</p>';
+
+    document.getElementById('totals').innerHTML = '';
+    return;
   }
+
   const { items } = await api('/cart?branch_id=' + branchId);
+
   cartItems = items;
+
   const el = document.getElementById('cart');
-  if (!items.length) { el.innerHTML = '<p class="empty"><span class="icon">🛒</span>Giỏ hàng trống</p>'; renderTotals(); return; }
-  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Món</th><th>SL</th><th>Đơn giá</th><th>Tạm</th><th></th></tr></thead><tbody>' +
+
+  if (!items.length) {
+    el.innerHTML =
+      '<p class="empty"><span class="icon">🛒</span>Giỏ hàng trống</p>';
+
+    renderTotals();
+    return;
+  }
+
+  el.innerHTML =
+    '<div class="table-wrap"><table><thead><tr><th>Món</th><th>SL</th><th>Đơn giá</th><th>Tạm</th><th></th></tr></thead><tbody>' +
+
     items.map(c => {
-      const sub = Number(c.unit_price) * c.quantity;
-      return '<tr><td>' + escapeHtml(c.name) + '</td><td><div class="row-actions" style="margin:0">' +
-        '<button class="secondary" data-dec="' + c.id + '" data-q="' + c.quantity + '" style="padding:0.2rem 0.55rem" aria-label="Giảm">−</button>' +
-        '<span style="min-width:1.5rem;text-align:center">' + c.quantity + '</span>' +
-        '<button class="secondary" data-inc="' + c.id + '" data-q="' + c.quantity + '" style="padding:0.2rem 0.55rem" aria-label="Tăng">+</button></div></td>' +
-        '<td>' + vnd(c.unit_price) + '</td><td>' + vnd(sub) + '</td>' +
-        '<td><button class="secondary" data-del="' + c.id + '" style="padding:0.2rem 0.55rem" aria-label="Xóa">🗑️</button></td></tr>';
-    }).join('') + '</tbody></table></div>';
+
+      // Xử lý hiển thị topping và tính lại giá
+      const opts =
+        typeof c.options_json === 'string'
+          ? JSON.parse(c.options_json)
+          : (c.options_json || []);
+
+      let toppingHtml = '';
+      let toppingPrice = 0;
+
+      if (opts.length > 0) {
+        toppingHtml =
+          '<br><small class="tag" style="display:inline-block;margin-top:4px">' +
+          opts.map(t => '+ ' + escapeHtml(t.name)).join(', ') +
+          '</small>';
+
+        opts.forEach(t => toppingPrice += Number(t.price));
+      }
+
+      const realUnitPrice = Number(c.unit_price) + toppingPrice;
+      const sub = realUnitPrice * c.quantity;
+
+      return '<tr>' +
+
+        '<td>' +
+          escapeHtml(c.name) +
+          toppingHtml +
+        '</td>' +
+
+        '<td><div class="row-actions" style="margin:0">' +
+
+          '<button class="secondary" data-dec="' + c.id + '" data-q="' + c.quantity + '" style="padding:0.2rem 0.55rem">' +
+            '−' +
+          '</button>' +
+
+          '<span style="min-width:1.5rem;text-align:center">' +
+            c.quantity +
+          '</span>' +
+
+          '<button class="secondary" data-inc="' + c.id + '" data-q="' + c.quantity + '" style="padding:0.2rem 0.55rem">' +
+            '+' +
+          '</button>' +
+
+        '</div></td>' +
+
+        '<td>' + vnd(realUnitPrice) + '</td>' +
+        '<td>' + vnd(sub) + '</td>' +
+
+        '<td>' +
+          '<button class="secondary" data-del="' + c.id + '" style="padding:0.2rem 0.55rem">' +
+            '🗑️' +
+          '</button>' +
+        '</td>' +
+
+      '</tr>';
+
+    }).join('') +
+
+    '</tbody></table></div>';
+
   el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
-    await api('/cart/items/' + b.dataset.del, { method:'DELETE' }); loadCart();
+    await api('/cart/items/' + b.dataset.del, { method: 'DELETE' });
+    loadCart();
   });
+
   const change = async (id, q) => {
-    if (q < 1) await api('/cart/items/' + id, { method:'DELETE' });
-    else await api('/cart/items/' + id, { method:'PATCH', body:{ quantity: q } });
+    if (q < 1) {
+      await api('/cart/items/' + id, { method: 'DELETE' });
+    } else {
+      await api('/cart/items/' + id, {
+        method: 'PATCH',
+        body: { quantity: q }
+      });
+    }
+
     loadCart();
   };
-  el.querySelectorAll('[data-inc]').forEach(b => b.onclick = () => change(b.dataset.inc, Number(b.dataset.q) + 1));
-  el.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => change(b.dataset.dec, Number(b.dataset.q) - 1));
+
+  el.querySelectorAll('[data-inc]').forEach(
+    b => b.onclick = () => change(b.dataset.inc, Number(b.dataset.q) + 1)
+  );
+
+  el.querySelectorAll('[data-dec]').forEach(
+    b => b.onclick = () => change(b.dataset.dec, Number(b.dataset.q) - 1)
+  );
+
   renderTotals();
 }
+
 function renderTotals() {
-  let subtotal = 0; cartItems.forEach(c => subtotal += Number(c.unit_price) * c.quantity);
+  let subtotal = 0; 
+  
+  // Duyệt qua từng món trong danh sách giỏ hàng để tính toán 
+  cartItems.forEach(c => {
+    // Giải mã danh sách topping từ cột options_json 
+    const opts = typeof c.options_json === 'string' ? JSON.parse(c.options_json) : (c.options_json || []);
+    let toppingPriceSum = 0;
+    
+    // Cộng dồn giá của từng topping đã chọn cho món này 
+    opts.forEach(t => toppingPriceSum += Number(t.price));
+    
+    // Tính tổng tiền cho dòng này: (Giá món + Tổng tiền topping) x Số lượng 
+    subtotal += (Number(c.unit_price) + toppingPriceSum) * c.quantity;
+  });
+
+  // Phí giao dịch và tính toán tổng cuối sau giảm giá 
   const ship = subtotal > 0 ? 20000 : 0;
   const total = Math.max(0, subtotal - discount + ship);
+
+  // Hiển thị các chỉ số KPI ra giao diện 
   document.getElementById('totals').innerHTML =
     '<div class="kpi"><div class="l">Tạm tính</div><div class="v">' + vnd(subtotal) + '</div></div>' +
     '<div class="kpi"><div class="l">Giảm giá</div><div class="v">' + vnd(discount) + '</div></div>' +
     '<div class="kpi"><div class="l">Phí ship</div><div class="v">' + vnd(ship) + '</div></div>' +
-    '<div class="kpi"><div class="l">Tổng cuối</div><div class="v">' + vnd(total) + '</div></div>';
+    '<div class="kpi" style="border-top:2px solid var(--border); padding-top:0.5rem; margin-top:0.5rem">' +
+    '<div class="l"><strong>Tổng cuối</strong></div><div class="v" style="color:var(--primary); font-size:1.2rem"><strong>' + vnd(total) + '</strong></div></div>';
 }
+
 document.getElementById('clearV').onclick = () => {
   voucherId = null; discount = 0;
-  document.getElementById('vcode').value = '';
+  document.getElementById('voucherSel').value = ''; // Đã sửa vcode -> voucherSel
   document.getElementById('vinfo').textContent = '';
   renderTotals();
 };
+
 document.getElementById('applyV').onclick = async () => {
-  const code = document.getElementById('vcode').value.trim();
+  const code = document.getElementById('voucherSel').value.trim(); // Đã sửa vcode -> voucherSel
   if (!code) return document.getElementById('vinfo').textContent = '';
   if (!branchId) return showMsg('<div class="msg err">Chọn chi nhánh trước</div>');
   let subtotal = 0; cartItems.forEach(c => subtotal += Number(c.unit_price) * c.quantity);
@@ -347,7 +469,7 @@ document.getElementById('checkout').onclick = async () => {
       }
       
       voucherId = null; discount = 0; currentLat = null; currentLng = null;
-      document.getElementById('vcode').value = ''; document.getElementById('vinfo').textContent = '';
+      document.getElementById('voucherSel').value = ''; document.getElementById('vinfo').textContent = '';
       document.getElementById('saveAddr').checked = false; // Bỏ tick sau khi đặt xong
       
       await loadCart(); await loadOrders();
@@ -360,42 +482,173 @@ document.getElementById('logoutBtn').onclick = logout;
 
 async function loadOrders() {
   const el = document.getElementById('orders');
+
   el.innerHTML = '<div class="skeleton" style="height:80px"></div>';
+
   try {
     const { orders } = await api('/orders');
-    if (!orders.length) { el.innerHTML = '<p class="empty"><span class="icon">📭</span>Bạn chưa đặt đơn nào</p>'; return; }
-    el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Chi nhánh</th><th>Tổng</th><th>Trạng thái</th><th></th></tr></thead><tbody>' +
+
+    if (!orders.length) {
+      el.innerHTML = '<p class="empty"><span class="icon">📭</span>Bạn chưa đặt đơn nào</p>';
+      return;
+    }
+
+    el.innerHTML =
+      '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Chi nhánh</th><th>Tổng</th><th>Trạng thái</th><th></th></tr></thead><tbody>' +
+
       orders.map(o => {
-        const canCancel = ['PENDING_BRANCH','PENDING_PAYMENT','AWAITING_KITCHEN'].includes(o.status);
-        return '<tr><td><strong>' + o.order_code + '</strong></td><td>' + escapeHtml(o.branch_name) + '</td><td>' + vnd(o.total) + '</td>' +
-          '<td><span class="badge ' + (o.status === 'COMPLETED' ? 'ok' : (o.status === 'CANCELLED' ? '' : 'warn')) + '">' + statusLabel(o.status) + '</span></td>' +
-          '<td><button class="secondary" onclick="viewOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Xem</button>' +
-          (canCancel ? '<button class="danger" onclick="cancelOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Hủy</button>' : '') +
-          (o.status === 'COMPLETED' ? '<button onclick="reviewOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">★ Đánh giá</button>' : '') +
+        const canCancel = ['PENDING_BRANCH', 'PENDING_PAYMENT', 'AWAITING_KITCHEN'].includes(o.status);
+
+        return '<tr>' +
+          '<td><strong>' + o.order_code + '</strong></td>' +
+          '<td>' + escapeHtml(o.branch_name) + '</td>' +
+          '<td>' + vnd(o.total) + '</td>' +
+
+          '<td><span class="badge ' +
+            (o.status === 'COMPLETED'
+              ? 'ok'
+              : (o.status === 'CANCELLED' ? '' : 'warn')) +
+            '">' + statusLabel(o.status) + '</span></td>' +
+
+          '<td>' +
+
+            // Xem đơn
+            '<button class="secondary" onclick="viewOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">' +
+              'Xem' +
+            '</button>' +
+
+            // Hủy đơn
+            (canCancel
+              ? '<button class="danger" onclick="cancelOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">' +
+                  'Hủy' +
+                '</button>'
+              : '') +
+
+            // Đánh giá
+            (o.status === 'COMPLETED'
+              ? '<button onclick="reviewOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">' +
+                  '★ Đánh giá' +
+                '</button>'
+              : '') +
+
+            // Đặt lại
+            ((o.status === 'COMPLETED' || o.status === 'CANCELLED')
+              ? '<button class="secondary" onclick="reorder(' + o.id + ')" style="padding:0.25rem 0.55rem">' +
+                  'Đặt lại' +
+                '</button>'
+              : '') +
+
           '</td></tr>';
-      }).join('') + '</tbody></table></div>';
+      }).join('') +
+
+      '</tbody></table></div>';
+
   } catch (e) {
     el.innerHTML = '<div class="msg err">' + escapeHtml(e.message) + '</div>';
   }
 }
+
 window.viewOrder = async function(id) {
   try {
     const { order, items, history, delivery } = await api('/orders/' + id);
-    const lines = items.map(i => '<tr><td>' + escapeHtml(i.product_name) + '</td><td>' + i.quantity + '</td><td>' + vnd(i.unit_price) + '</td><td>' + vnd(i.unit_price * i.quantity) + '</td></tr>').join('');
-    const hist = (history || []).map(h => '<li><small class="tag">🕒 ' + formatDateTime(h.created_at) + '</small> — <strong>' + statusLabel(h.status) + '</strong>' + (h.note ? ' · ' + escapeHtml(h.note) : '') + '</li>').join('');
+    const lines = items.map(i => {
+      const opts = typeof i.options_json === 'string' ? JSON.parse(i.options_json) : (i.options_json || []);
+      let toppingHtml = '';
+      if (opts.length > 0) {
+        toppingHtml = '<br><small class="tag" style="margin-top:4px; display:inline-block;">+ ' + opts.map(t => escapeHtml(t.name)).join(', ') + '</small>';
+      }
+      return '<tr><td>' + escapeHtml(i.product_name) + toppingHtml + '</td><td>' + i.quantity + '</td><td>' + vnd(i.unit_price) + '</td><td>' + vnd(i.unit_price * i.quantity) + '</td></tr>';
+    }).join('');
+    
+    const hist = (history || []).map(h => '<li><small class="tag">🕒 ' + formatDateTime(h.created_at) + '</small> — <strong>' + statusLabel(h.status) + '</strong>' + (h.note ? ' · ' + escapeHtml(h.note) : '') + '</li>').join('');    
     showModal('<h3>Đơn ' + order.order_code + '</h3>' +
       '<div style="margin-bottom:0.6rem">' + renderStatusPipeline(order.status, order.payment_method) + '</div>' +
+      
+      // Phần thông tin chung
       '<div class="kpi-grid">' +
       '<div class="kpi"><div class="l">Chi nhánh</div><div class="v" style="font-size:0.95rem">' + escapeHtml(order.branch_name) + '</div></div>' +
       '<div class="kpi"><div class="l">PT thanh toán</div><div class="v" style="font-size:0.95rem">' + order.payment_method + '</div></div>' +
       '<div class="kpi"><div class="l">TT thanh toán</div><div class="v" style="font-size:0.95rem">' + order.payment_status + '</div></div>' +
-      '<div class="kpi"><div class="l">Tổng</div><div class="v">' + vnd(order.total) + '</div></div></div>' +
-      '<h4 style="margin-top:1rem">Món</h4><div class="table-wrap"><table><thead><tr><th>Tên</th><th>SL</th><th>Đơn giá</th><th>Tạm</th></tr></thead><tbody>' + lines + '</tbody></table></div>' +
+      '</div>' +
+
+      // Bổ sung chi tiết các khoản phí giống giỏ hàng
+      '<h4 style="margin-top:1rem">Chi tiết thanh toán</h4>' +
+      '<div class="kpi-grid" style="background:var(--surface-2); padding:0.75rem; border-radius:8px;">' +
+      '<div class="kpi"><div class="l">Tạm tính</div><div class="v">' + vnd(order.subtotal) + '</div></div>' +
+      '<div class="kpi"><div class="l">Giảm giá</div><div class="v">' + vnd(order.discount_amount) + '</div></div>' +
+      '<div class="kpi"><div class="l">Phí ship</div><div class="v">' + vnd(order.shipping_fee) + '</div></div>' +
+      '<div class="kpi" style="border-top:1px solid var(--border); padding-top:0.5rem; margin-top:0.5rem">' +
+      '<div class="l"><strong>Tổng cộng</strong></div><div class="v" style="color:var(--primary); font-size:1.1rem"><strong>' + vnd(order.total) + '</strong></div></div>' +
+      '</div>' +
+
+      '<h4 style="margin-top:1rem">Món đã đặt</h4><div class="table-wrap"><table><thead><tr><th>Tên</th><th>SL</th><th>Đơn giá</th><th>Tạm</th></tr></thead><tbody>' + lines + '</tbody></table></div>' +
       '<h4 style="margin-top:1rem">Lịch sử trạng thái</h4><ul style="font-size:0.85rem">' + hist + '</ul>' +
       (delivery ? '<p class="tag">Vận chuyển: ' + escapeHtml(delivery.external_shipment_id || '') + ' · ' + escapeHtml(delivery.status || '') + '</p>' : '') +
       '<div class="row-actions" style="margin-top:1rem;justify-content:flex-end"><button class="secondary" onclick="closeModal()">Đóng</button></div>');
   } catch (e) { alertModal(e.message); }
 };
+
+window.addToCartWithToppings = async function(productId, productName) {
+    try {
+        const res = await api('/products/' + productId + '/toppings');
+        const toppings = res.toppings || [];
+
+        if (toppings.length === 0) {
+            await api('/cart/items', { method: 'POST', body: { branch_id: branchId, product_id: productId, quantity: 1, options_json: [] } });
+            loadCart();
+            showMsg('<div class="msg ok">✓ Đã thêm ' + escapeHtml(productName) + ' vào giỏ!</div>');
+            return;
+        }
+
+        const html = toppings.map(t => {
+            // Chuyển dấu ngoặc kép của chuỗi JSON thành &quot; để không làm hỏng thẻ HTML
+            const val = JSON.stringify({id: t.id, name: t.name, price: Number(t.price)}).replace(/"/g, '&quot;');
+            return `<label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; cursor:pointer;">
+                <input type="checkbox" value="${val}" class="topping-item" style="width:1.2rem; height:1.2rem;"> 
+                ${escapeHtml(t.name)} <span style="color:var(--primary);">+${vnd(t.price)}</span>
+            </label>`;
+        }).join('');
+
+        // Sử dụng showModal để render được các thẻ HTML 
+        showModal(
+            '<h3>Thêm Topping cho ' + escapeHtml(productName) + '</h3>' +
+            '<div style="text-align:left; background:var(--surface-2); padding:1rem; border-radius:8px; margin-bottom:1rem;">' + html + '</div>' +
+            '<div class="row-actions" style="justify-content:flex-end">' +
+                '<button class="secondary" onclick="closeModal()">Hủy</button>' +
+                '<button onclick="submitToppingCart(' + productId + ')">Thêm vào giỏ</button>' +
+            '</div>'
+        );
+    } catch (e) { 
+        alertModal(e.message); 
+    }
+};
+
+// Hàm mới để xử lý sự kiện khi ấn nút "Thêm vào giỏ" trong Modal
+window.submitToppingCart = async function(productId) {
+    try {
+        // Lấy danh sách các topping đã được tick chọn
+        const checkboxes = document.querySelectorAll('.topping-item:checked');
+        const selectedToppings = Array.from(checkboxes).map(cb => JSON.parse(cb.value));
+
+        // Gửi API thêm vào giỏ hàng
+        await api('/cart/items', { 
+            method: 'POST', 
+            body: { 
+                branch_id: branchId, 
+                product_id: productId, 
+                quantity: 1, 
+                options_json: selectedToppings 
+            } 
+        });
+        
+        closeModal();
+        loadCart();
+        showMsg('<div class="msg ok">✓ Đã thêm món vào giỏ!</div>');
+    } catch (e) {
+        alertModal(e.message);
+    }
+};
+
 window.cancelOrder = async function(id) {
   const reason = await promptModal({ title: 'Hủy đơn', label: 'Lý do hủy', defaultValue: 'Đổi ý' });
   if (reason === null) return;
@@ -421,8 +674,15 @@ window.submitReview = async function(id) {
     showMsg('<div class="msg ok">Cảm ơn đánh giá của bạn!</div>');
   } catch (e) { alertModal(e.message); }
 };
+window.reorder = async function(id) {
+  try {
+    await api('/orders/' + id + '/reorder', { method: 'POST' });
+    showMsg('<div class="msg ok">Đã thêm các món từ đơn cũ vào giỏ hàng!</div>');
+    await loadCart();
+  } catch (e) { alertModal(e.message); }
+};
 document.getElementById('profileBtn').onclick = () => {
-  showModal('<h3>👤 Hồ sơ cá nhân</h3>' +
+  showModal('<h3>Hồ sơ cá nhân</h3>' +
     '<label for="pf_name">Họ tên</label><input id="pf_name" value="' + escapeHtml(u.full_name || '') + '" />' +
     '<label for="pf_email">Email</label><input id="pf_email" type="email" value="' + escapeHtml(u.email || '') + '" />' +
     '<label for="pf_addr">Địa chỉ giao mặc định</label><input id="pf_addr" value="' + escapeHtml(u.default_address || '') + '" />' +

@@ -26,6 +26,8 @@
     <button data-tab="inv">📦 Kho chi nhánh</button>
     <button data-tab="req">📝 Phiếu xin hàng</button>
     <button data-tab="rep">📊 Báo cáo</button>
+    <button data-tab="staff">👥 Nhân sự</button>
+    <button data-tab="cash">💰 Thu ngân & Quỹ</button>
   </div>
   <section id="tab-orders" class="tab-panel active">
     <div class="card">
@@ -49,7 +51,10 @@
   </section>
   <section id="tab-inv" class="tab-panel">
     <div class="card">
-      <h2>📦 Tồn kho chi nhánh (UC-30)</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <h2>📦 Tồn kho chi nhánh (UC-30)</h2>
+        <button class="secondary" onclick="openAdjustmentModal()">📝 Kiểm kê / Điều chỉnh</button>
+      </div>
       <div class="filter-bar">
         <input id="invSearch" placeholder="🔎 Tìm nguyên liệu" aria-label="Tìm nguyên liệu" />
       </div>
@@ -57,7 +62,12 @@
     </div>
   </section>
   <section id="tab-req" class="tab-panel">
-    <div class="card">
+    <div class="card" style="border-left: 4px solid var(--primary);">
+      <h3>🚚 Chuyến hàng đang đến</h3>
+      <p class="tag">Các lô hàng đã xuất từ kho tổng. Vui lòng kiểm đếm và bấm "Xác nhận nhận hàng".</p>
+      <div id="incomingStock"></div>
+    </div>
+    <div class="card" style="margin-top:1.5rem">
       <h2>📝 Tạo phiếu xin hàng kho tổng (UC-32)</h2>
       <div id="reqLines"><p class="tag">Bấm "+ Dòng" để thêm nguyên liệu cần xin.</p></div>
       <div class="row-actions">
@@ -70,17 +80,6 @@
     </div>
     <div class="card"><h2>Lịch sử phiếu xin hàng</h2><div id="reqHistory"></div></div>
   </section>
-  <!-- <section id="tab-rep" class="tab-panel">
-    <div class="card">
-      <h2>📊 Báo cáo doanh thu (UC-30)</h2>
-      <div class="grid grid-2">
-        <div><label for="from">Từ ngày</label><input id="from" type="date" /></div>
-        <div><label for="to">Đến ngày</label><input id="to" type="date" /></div>
-      </div>
-      <div class="row-actions"><button type="button" id="loadRep">Tải báo cáo</button></div>
-      <div id="rep" class="kpi-grid" style="margin-top:1rem"></div>
-    </div>
-  </section> -->
   <section id="tab-rep" class="tab-panel">
     <div class="card">
       <h2>📊 Báo cáo doanh thu</h2>
@@ -146,6 +145,47 @@
       <div id="repDetails" style="margin-top:2rem"></div>
     </div>
   </section>
+  <section id="tab-staff" class="tab-panel">
+    <div class="card">
+      <h2>👥 Nhân viên chi nhánh (UC-29)</h2>
+      <div id="staffList"></div>
+      
+      <h3 style="margin-top: 2rem">+ Thêm nhân viên mới</h3>
+      <div class="grid grid-2">
+        <div><label>Họ tên *</label><input id="ns_name" placeholder="Nguyễn Văn A" /></div>
+        <div><label>Số điện thoại *</label><input id="ns_phone" placeholder="090..." /></div>
+        <div><label>Email</label><input id="ns_email" type="email" /></div>
+        <div><label>Mật khẩu tạm thời *</label><input id="ns_pass" type="password" /></div>
+        <div style="grid-column: span 2"><label>Vai trò *</label><select id="ns_role"></select></div>
+      </div>
+      <div class="row-actions"><button id="addStaffBtn">Tạo tài khoản</button></div>
+    </div>
+  </section>
+
+  <section id="tab-cash" class="tab-panel">
+    <div class="grid grid-2">
+      <div class="card">
+        <h2>💵 Quản lý Ca làm việc</h2>
+        <div class="row-actions" style="margin-bottom: 1rem">
+          <button class="secondary" onclick="openShift()">Mở ca mới</button>
+          <button class="danger" onclick="closeShift()">Chốt ca</button>
+        </div>
+        <div id="shiftHistory"></div>
+      </div>
+      
+      <div class="card">
+        <h2>🛒 Mua ngoài dự phòng (Petty Cash)</h2>
+        <p class="tag">Trừ trực tiếp vào quỹ tiền mặt của ca hiện tại và cộng ngay vào tồn kho.</p>
+        <div class="grid grid-2">
+          <div style="grid-column: span 2"><label>Nguyên liệu</label><select id="lp_ing"></select></div>
+          <div><label>Số lượng (ĐV Cơ bản)</label><input id="lp_qty" type="number" min="0.1" step="0.1" /></div>
+          <div><label>Đơn giá</label><input id="lp_price" type="number" min="0" /></div>
+          <div style="grid-column: span 2"><label>Ghi chú (Tên siêu thị/chợ...)</label><input id="lp_note" /></div>
+        </div>
+        <div class="row-actions"><button id="addLocalPurchaseBtn">Xác nhận mua</button></div>
+      </div>
+    </div>
+  </section>
 </div>
 <script src="/js/api.js"></script>
 <script>
@@ -160,8 +200,10 @@ document.querySelectorAll('.tabs button').forEach(b => {
     b.classList.add('active');
     document.getElementById('tab-' + b.dataset.tab).classList.add('active');
     if (b.dataset.tab === 'inv') loadInv();
-    if (b.dataset.tab === 'req') loadReqHistory();
+    if (b.dataset.tab === 'req') { loadReqHistory(); loadIncomingStock(); }
     if (b.dataset.tab === 'menu') loadMenu();
+    if (b.dataset.tab === 'staff') loadStaff();
+    if (b.dataset.tab === 'cash') { loadShifts(); loadLocalPurchaseOpts(); }
   };
 });
 function showMsg(html) {
@@ -195,34 +237,98 @@ async function loadDashboard() {
       '<div class="kpi"><div class="l">Hủy</div><div class="v">' + (counts['CANCELLED'] || 0) + '</div></div>';
   } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
 }
+
 function renderOrders() {
   const search = document.getElementById('orderSearch').value.trim().toLowerCase();
   const st = document.getElementById('orderStatus').value;
+
   let list = allOrders;
-  if (search) list = list.filter(o => (o.order_code + ' ' + (o.customer_name || '')).toLowerCase().includes(search));
-  if (st) list = list.filter(o => o.status === st);
+
+  if (search) {
+    list = list.filter(o =>
+      (o.order_code + ' ' + (o.customer_name || ''))
+        .toLowerCase()
+        .includes(search)
+    );
+  }
+
+  if (st) {
+    list = list.filter(o => o.status === st);
+  }
+
   document.getElementById('orders').innerHTML = list.length
     ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Mã</th><th>Khách</th><th>Tổng</th><th>Trạng thái</th><th></th></tr></thead><tbody>' +
-      list.map(o => '<tr><td>' + o.id + '</td><td><strong>' + o.order_code + '</strong></td><td>' + escapeHtml(o.customer_name) + '</td><td>' + vnd(o.total) + '</td>' +
-        '<td><span class="badge ' + (o.status === 'COMPLETED' ? 'ok' : (o.status === 'CANCELLED' ? '' : 'warn')) + '">' + statusLabel(o.status) + '</span></td>' +
-        '<td>' +
-        (o.status === 'PENDING_BRANCH' ? '<button data-confirm="' + o.id + '" style="padding:0.25rem 0.55rem">✓ Xác nhận</button>' : '') +
-        (o.status === 'AWAITING_SHIPPER' ? '<button class="secondary" data-dispatch="' + o.id + '" style="padding:0.25rem 0.55rem">🚚 Gọi ship</button>' : '') +
-        ' <button class="secondary" onclick="viewBranchOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Xem</button></td></tr>').join('') +
+      list.map(o => {
+
+        let actions = '';
+
+        if (o.status === 'PENDING_BRANCH') {
+          actions += '<button data-confirm="' + o.id + '" style="padding:0.25rem 0.55rem">✓ Xác nhận</button>';
+        }
+
+        if (o.status === 'AWAITING_SHIPPER') {
+          actions += '<button class="secondary" data-dispatch="' + o.id + '" style="padding:0.25rem 0.55rem">Gọi ship</button>';
+        }
+
+        // UC-28: Đánh dấu giao thất bại
+        if (['DELIVERING', 'AWAITING_SHIPPER'].includes(o.status)) {
+          actions += ' <button class="danger" onclick="markFailed(' + o.id + ')" title="Khách boom hàng / Không liên lạc được" style="padding:0.25rem 0.55rem">✖ Thất bại</button>';
+        }
+
+        actions += ' <button class="secondary" onclick="viewBranchOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Xem</button>';
+
+        return '<tr>' +
+          '<td>' + o.id + '</td>' +
+          '<td><strong>' + o.order_code + '</strong></td>' +
+          '<td>' + escapeHtml(o.customer_name) + '</td>' +
+          '<td>' + vnd(o.total) + '</td>' +
+          '<td><span class="badge ' +
+            (o.status === 'COMPLETED'
+              ? 'ok'
+              : (o.status === 'CANCELLED' ? '' : 'warn')) +
+            '">' + statusLabel(o.status) + '</span></td>' +
+          '<td>' + actions + '</td>' +
+          '</tr>';
+
+      }).join('') +
       '</tbody></table></div>'
     : '<p class="empty"><span class="icon">📭</span>Không có đơn phù hợp</p>';
+
   document.querySelectorAll('[data-confirm]').forEach(b => b.onclick = async () => {
     if (!await confirmModal('Xác nhận đơn để chuyển sang bếp?')) return;
-    try { await api('/branch/orders/' + b.dataset.confirm + '/confirm', { method:'POST', body:{} }); loadOrders(); loadDashboard(); }
-    catch (e) { alertModal(e.message); }
+
+    try {
+      await api('/branch/orders/' + b.dataset.confirm + '/confirm', {
+        method: 'POST',
+        body: {}
+      });
+
+      loadOrders();
+      loadDashboard();
+    } catch (e) {
+      alertModal(e.message);
+    }
   });
+
   document.querySelectorAll('[data-dispatch]').forEach(b => b.onclick = async () => {
     if (!await confirmModal('Gọi đơn vị vận chuyển cho đơn này?')) return;
-    try { const r = await api('/branch/orders/' + b.dataset.dispatch + '/dispatch-delivery', { method:'POST', body:{} });
-      await alertModal('Đã gọi ĐVVC. Mã chuyến: ' + r.shipment_id); loadOrders(); loadDashboard(); }
-    catch (e) { alertModal(e.message); }
+
+    try {
+      const r = await api('/branch/orders/' + b.dataset.dispatch + '/dispatch-delivery', {
+        method: 'POST',
+        body: {}
+      });
+
+      await alertModal('Đã gọi ĐVVC. Mã chuyến: ' + r.shipment_id);
+
+      loadOrders();
+      loadDashboard();
+    } catch (e) {
+      alertModal(e.message);
+    }
   });
 }
+
 async function loadOrders() {
   const { orders } = await api('/branch/orders');
   allOrders = orders;
@@ -261,15 +367,46 @@ function renderMenu() {
           '<td><button class="secondary" data-toggle="' + m.product_id + '" data-m="' + (m.manual_off ? 0 : 1) + '" style="padding:0.25rem 0.55rem">' + (m.manual_off ? 'Bật lại' : 'Tắt món') + '</button></td></tr>';
       }).join('') + '</tbody></table></div>'
     : '<p class="empty"><span class="icon">🍽️</span>Không có món phù hợp</p>';
-  document.querySelectorAll('[data-toggle]').forEach(b => b.onclick = async () => {
+  // Tìm đến phần click handler của nút [data-toggle] và cập nhật như sau:
+    document.querySelectorAll('[data-toggle]').forEach(b => b.onclick = async () => {
     const turnOff = !!Number(b.dataset.m);
     let reason = null;
+    let minutes = null;
+
     if (turnOff) {
-      reason = await promptModal({ title: 'Tắt món', label: 'Lý do tắt món', defaultValue: 'Sự cố vận hành' });
+      // 1. Hỏi lý do
+      reason = await promptModal({ 
+        title: 'Tắt món', 
+        label: 'Lý do tắt món (vd: Hỏng máy nướng)', 
+        defaultValue: 'Sự cố vận hành' 
+      });
       if (reason === null) return;
+
+      // 2. Hỏi thời gian tự động bật lại (UC-31/UC-82)
+      const minStr = await promptModal({ 
+        title: 'Hẹn giờ bật lại', 
+        label: 'Số phút dự kiến phục hồi (để trống nếu tắt vô thời hạn)', 
+        defaultValue: '60' 
+      });
+      if (minStr !== null && minStr.trim() !== '') {
+        minutes = Number(minStr);
+      }
     }
-    await api('/branch/menu/' + b.dataset.toggle, { method:'PATCH', body:{ manual_off: turnOff, manual_off_reason: reason } });
-    loadMenu();
+
+    try {
+      await api('/branch/menu/' + b.dataset.toggle, { 
+        method: 'PATCH', 
+        body: { 
+          manual_off: turnOff, 
+          manual_off_reason: reason,
+          manual_off_until_minutes: minutes // Truyền thêm tham số thời gian
+        } 
+      });
+      showMsg('<div class="msg ok">✓ Đã cập nhật trạng thái món</div>');
+      loadMenu();
+    } catch (e) {
+      alertModal(e.message);
+    }
   });
 }
 async function loadMenu() {
@@ -321,22 +458,51 @@ document.getElementById('submitReq').onclick = async () => {
     loadReqHistory();
   } catch (e) { alertModal(e.message); }
 };
-// --- THAY THẾ HÀM CŨ BẰNG ĐOẠN MÃ NÀY ---
 async function loadReqHistory() {
   const { requests } = await api('/branch/stock-requests');
   document.getElementById('reqHistory').innerHTML = requests.length
     ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Trạng thái</th><th>Khẩn</th><th>Ngày</th><th>Số dòng</th><th>Thao tác</th></tr></thead><tbody>' +
-      requests.map(r => `<tr>
-        <td>#${r.id}</td>
-        <td><span class="badge">${r.status}</span></td>
-        <td>${r.is_urgent ? '⚡' : ''}</td>
-        <td>${formatDateTime(r.created_at)}</td>
-        <td>${r.line_count}</td>
-        <td><button class="secondary" onclick="viewReqDetail(${r.id})" style="padding:0.25rem 0.55rem">Xem chi tiết</button></td>
-      </tr>`).join('') +
+      requests.map(r => {
+        let actions = `<button class="secondary" onclick="viewReqDetail(${r.id})" style="padding:0.25rem 0.55rem">Xem chi tiết</button>`;
+        // Bổ sung nút khiếu nại cho các đơn đang giao hoặc đã xong
+        if (['SHIPPING', 'COMPLETED', 'ISSUE'].includes(r.status)) {
+          actions += ` <button class="danger" onclick="reportRequestIssue(${r.id})" title="Khiếu nại/Báo lỗi" style="padding:0.25rem 0.55rem">⚠️</button>`;
+        }
+        return `<tr>
+          <td>#${r.id}</td>
+          <td><span class="badge">${r.status}</span></td>
+          <td>${r.is_urgent ? '⚡' : ''}</td>
+          <td>${formatDateTime(r.created_at)}</td>
+          <td>${r.line_count}</td>
+          <td>${actions}</td>
+        </tr>`;
+      }).join('') +
       '</tbody></table></div>'
     : '<p class="empty"><span class="icon">📭</span>Chưa có phiếu nào</p>';
 }
+
+// Hàm xử lý nút khiếu nại trong lịch sử
+window.reportRequestIssue = async function(id) {
+  const reason = await promptModal({ 
+    title: `Khiếu nại phiếu #${id}`, 
+    label: 'Nhập nội dung khiếu nại (ví dụ: phát hiện hàng hỏng sau khi đã nhận)', 
+    defaultValue: '' 
+  });
+  
+  if (!reason) return;
+
+  // Gọi chung API report-issue để ghi log
+  try {
+    await withLoading('Đang gửi...', () => api(`/branch/outbounds/${id}/report-issue`, {
+      method: 'POST', body: { reason }
+    }));
+    await alertModal('Đã gửi khiếu nại thành công!');
+    loadReqHistory();
+  } catch (e) {
+    // Nếu API báo lỗi vì không tìm thấy phiếu xuất (do phiếu chưa được tạo outbound), thông báo cho user
+    alertModal('Không thể khiếu nại: ' + e.message);
+  }
+};
 
 // Bổ sung hàm hiển thị Modal chi tiết phiếu xin hàng
 window.viewReqDetail = async function(id) {
@@ -377,21 +543,26 @@ window.viewReqDetail = async function(id) {
 };
 // ---------------------------------------
 
-document.getElementById('loadRep').onclick = async () => {
-  // --- KHỞI TẠO GIÁ TRỊ MẶC ĐỊNH CHO CÁC Ô NHẬP NĂM ---
+// =========================================================
+// XỬ LÝ TAB BÁO CÁO (UC-?)
+// =========================================================
+
+// --- KHỞI TẠO GIÁ TRỊ MẶC ĐỊNH CHO CÁC Ô NHẬP NĂM ---
 const currentYear = new Date().getFullYear();
 document.getElementById('monthYear').value = currentYear;
 document.getElementById('toYear').value = currentYear;
 document.getElementById('fromYear').value = currentYear - 2; // Mặc định hiển thị 3 năm gần nhất
 
-// Hàm ẩn/hiện form tùy theo loại báo cáo
+// Hàm ẩn/hiện form tùy theo loại báo cáo (Phải nằm ở Global Scope để HTML gọi được)
 window.toggleRepInputs = function() {
   const type = document.getElementById('repType').value;
-  // Dùng .style.display = '' (hoặc 'grid') để reset lại trạng thái hiển thị
   document.getElementById('filter-day').style.display = type === 'day' ? '' : 'none';
   document.getElementById('filter-month').style.display = type === 'month' ? '' : 'none';
   document.getElementById('filter-year').style.display = type === 'year' ? '' : 'none';
 };
+
+// Gọi ngay 1 lần lúc tải trang để reset giao diện cho khớp với Select mặc định
+toggleRepInputs();
 
 // --- XỬ LÝ KHI BẤM NÚT TẢI BÁO CÁO ---
 document.getElementById('loadRep').onclick = async () => {
@@ -409,7 +580,6 @@ document.getElementById('loadRep').onclick = async () => {
     const tm = document.getElementById('toMonth').value;
     if (y && fm && tm) {
       from = `${y}-${fm.padStart(2, '0')}-01`;
-      // Lấy ngày cuối cùng của tháng (mẹo: Date(year, month, 0) trả về ngày cuối của tháng đó)
       const lastDay = new Date(y, tm, 0).getDate();
       to = `${y}-${tm.padStart(2, '0')}-${lastDay}`;
     }
@@ -441,7 +611,6 @@ document.getElementById('loadRep').onclick = async () => {
       if (r.details && r.details.length > 0) {
           detailHtml += '<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Số lượng đơn</th><th>Doanh thu</th></tr></thead><tbody>';
           detailHtml += r.details.map(d => {
-              // Format lại nhãn hiển thị cho đẹp
               let label = d.label;
               if (type === 'month') label = 'Tháng ' + label.split('-')[1] + '/' + label.split('-')[0];
               if (type === 'year') label = 'Năm ' + label;
@@ -462,11 +631,282 @@ document.getElementById('loadRep').onclick = async () => {
       alertModal('Lỗi tải báo cáo: ' + e.message);
   }
 };
+
+
+// =========================================================
+// UC-28: XỬ LÝ ĐƠN GIAO THẤT BẠI (BOOM HÀNG)
+// =========================================================
+window.markFailed = async function(id) {
+  const reason = await promptModal({ title: 'Đánh dấu giao thất bại', label: 'Lý do (khách boom, hỏng đồ...)', defaultValue: 'Khách không nhận hàng' });
+  if (reason === null) return;
+  
+  try {
+    await withLoading('Đang xử lý...', () => api(`/branch/orders/${id}/mark-failed-delivery`, { method:'POST', body:{ reason } }));
+    showMsg('<div class="msg ok">✓ Đã chuyển trạng thái và ghi nhận hao hụt thực phẩm</div>');
+    loadOrders(); loadDashboard();
+  } catch (e) { alertModal(e.message); }
+};
+
+// =========================================================
+// UC-30: NHẬN HÀNG TỪ KHO TỔNG
+// =========================================================
+
+// =========================================================
+// UC-30: NHẬN HÀNG TỪ KHO TỔNG
+// =========================================================
+async function loadIncomingStock() {
+  try {
+    // Gọi API mới tạo của nhánh branch
+    const { outbounds } = await api('/branch/incoming-stock'); 
+    
+    // Không cần filter nữa vì Backend đã lo rồi
+    const myIncoming = outbounds; 
+    
+    document.getElementById('incomingStock').innerHTML = myIncoming.length
+      ? myIncoming.map(o => `
+        <div class="card" style="padding:0.75rem; margin-bottom:0.5rem; background: var(--surface-2)">
+          <div style="display:flex; justify-content:space-between; align-items:center">
+            <div><strong>Chuyến ${o.code}</strong><br><small>Xe: ${o.trip_code || 'N/A'}</small></div>
+            <button onclick="confirmReceive(${o.id})">📦 Nhận hàng</button>
+          </div>
+        </div>`).join('')
+      : '<p class="tag">Hiện không có chuyến xe nào đang đến.</p>';
+  } catch (e) { console.error(e); }
+}
+
+window.confirmReceive = async function(id) {
+  try {
+    const { outbound, lines } = await api(`/branch/outbounds/${id}`);
+    
+    const rows = lines.map(l => `
+      <tr>
+        <td>${escapeHtml(l.name)}</td>
+        <td>${Number(l.quantity).toLocaleString('vi-VN')} ${l.unit}</td>
+        <td>
+          <input type="number" data-recv-ing="${l.ingredient_id}" 
+                 value="${l.quantity}" min="0" step="0.1" style="width:100px; padding: 0.25rem;">
+        </td>
+      </tr>`).join('');
+
+    // Bổ sung ô Ghi chú phản hồi vào HTML của Modal
+    showModal(`
+      <h3>Kiểm đếm hàng nhận - Chuyến ${outbound.code}</h3>
+      <p class="tag">Vui lòng nhập số lượng thực tế bạn đếm được khi xe tải hạ hàng.</p>
+      
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Nguyên liệu</th><th>Phiếu xuất</th><th>Thực nhận</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <div style="margin-top: 1rem; background: var(--surface-2); padding: 0.75rem; border-radius: 4px;">
+        <label for="recvNote" style="font-weight: bold; color: var(--danger);">Ghi chú / Phản hồi (Bắt buộc nếu đếm thiếu):</label>
+        <input type="text" id="recvNote" placeholder="VD: Thiếu 1 thùng, tài xế làm đổ móp hộp..." style="width: 100%; margin-top: 0.5rem;" />
+      </div>
+
+      <div class="row-actions" style="margin-top:1rem; justify-content:flex-end">
+        <button class="secondary" onclick="closeModal()">Hủy</button>
+        <button onclick="submitReceive(${id})">✓ Xác nhận nhập kho</button>
+      </div>
+    `);
+  } catch (e) {
+    alertModal(e.message);
+  }
+};
+
+window.submitReceive = async function(id) {
+  const received_lines = [];
+  let isDiff = false; // Biến cờ kiểm tra xem có nhập lệch số hay không
+
+  document.querySelectorAll('[data-recv-ing]').forEach(input => {
+    const recvQty = Number(input.value);
+    const originQty = Number(input.defaultValue); // Số liệu gốc ban đầu
+    
+    if (recvQty !== originQty) isDiff = true;
+
+    received_lines.push({
+      ingredient_id: Number(input.dataset.recvIng),
+      qty_received: recvQty
+    });
+  });
+
+  const note = document.getElementById('recvNote').value.trim();
+
+  // Validate bắt buộc ghi chú nếu bị lệch
+  if (isDiff && !note) {
+    return alertModal('Bạn đã nhập số lượng lệch so với phiếu xuất. Vui lòng ghi chú rõ lý do vào ô trống ở dưới!');
+  }
+
+  try {
+    const res = await withLoading('Đang xử lý nhập kho...', () => api(`/branch/outbounds/${id}/receive`, {
+      method: 'POST',
+      body: { received_lines, note } // Đẩy thêm note xuống Server
+    }));
+    
+    closeModal();
+    if (res.has_discrepancy) {
+      await alertModal('⚠️ Hệ thống ghi nhận có CHÊNH LỆCH. Biên bản (kèm ghi chú của bạn) đã được gửi cho Quản lý kho tổng đối soát.');
+    } else {
+      showMsg('<div class="msg ok">✓ Đã nhận đủ hàng và nhập kho thành công!</div>');
+    }
+    loadIncomingStock();
+    loadInv();
+  } catch (e) {
+    alertModal(e.message);
+  }
+};
+// =========================================================
+// UC-30: KIỂM KÊ KHO CHI NHÁNH
+// =========================================================
+window.openAdjustmentModal = function() {
+  const rows = allInv.map(i => `
+    <tr>
+      <td>${escapeHtml(i.name)}</td>
+      <td>${Number(i.quantity).toLocaleString('vi-VN')} ${i.unit}</td>
+      <td><input type="number" data-adj="${i.ingredient_id}" value="${Number(i.quantity)}" style="width:100px" min="0"></td>
+    </tr>`).join('');
+
+  showModal(`<h3>Kiểm kê tồn kho thực tế</h3>
+    <p class="tag">Nhập số lượng đếm được tại quầy. Chênh lệch lớn sẽ được gửi lên cấp trên duyệt.</p>
+    <div class="table-wrap">
+      <table><thead><tr><th>Nguyên liệu</th><th>Hệ thống</th><th>Thực tế</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>
+    <div class="row-actions" style="margin-top:1rem; justify-content:flex-end">
+      <button class="secondary" onclick="closeModal()">Hủy</button>
+      <button onclick="submitAdjustment()">Xác nhận điều chỉnh</button>
+    </div>`);
+};
+
+window.submitAdjustment = async function() {
+  const lines = [];
+  document.querySelectorAll('[data-adj]').forEach(input => {
+    lines.push({ ingredient_id: Number(input.dataset.adj), qty_after: Number(input.value) });
+  });
+  
+  try {
+    const res = await api('/branch/inventory/adjust', { method:'POST', body: { reason: 'Kiểm kê định kỳ', lines } });
+    closeModal();
+    alertModal(res.message);
+    loadInv();
+  } catch (e) { alertModal(e.message); }
+};
+
+// ==========================================
+// UC-29: NHÂN SỰ
+// ==========================================
+async function loadStaff() {
+  try {
+    const { staff, roles } = await api('/branch/staff');
+    
+    document.getElementById('ns_role').innerHTML = '<option value="">-- Chọn vai trò --</option>' + 
+      roles.map(r => `<option value="${r.id}">${escapeHtml(r.name_vi)}</option>`).join('');
+
+    document.getElementById('staffList').innerHTML = staff.length
+      ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Họ tên</th><th>SĐT</th><th>Vai trò</th><th>Trạng thái</th></tr></thead><tbody>' +
+        staff.map(s => `<tr>
+          <td>${s.id}</td>
+          <td><strong>${escapeHtml(s.full_name)}</strong></td>
+          <td>${escapeHtml(s.phone)}</td>
+          <td><span class="badge">${escapeHtml(s.role_name)}</span></td>
+          <td>${s.is_active ? '<span class="badge ok">Hoạt động</span>' : '<span class="badge warn">Đã khóa</span>'}</td>
+        </tr>`).join('') + '</tbody></table></div>'
+      : '<p class="tag">Chưa có nhân viên nào.</p>';
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById('addStaffBtn').onclick = async () => {
+  const body = {
+    full_name: document.getElementById('ns_name').value.trim(),
+    phone: document.getElementById('ns_phone').value.trim(),
+    email: document.getElementById('ns_email').value.trim(),
+    password: document.getElementById('ns_pass').value,
+    role_id: document.getElementById('ns_role').value
+  };
+
+  try {
+    await api('/branch/staff', { method: 'POST', body });
+    showMsg('<div class="msg ok">✓ Đã tạo nhân viên. Vui lòng nhắc nhân viên đổi mật khẩu khi đăng nhập!</div>');
+    ['ns_name', 'ns_phone', 'ns_email', 'ns_pass'].forEach(id => document.getElementById(id).value = '');
+    loadStaff();
+  } catch (e) { alertModal(e.message); }
+};
+
+// ==========================================
+// QUỸ CA & MUA NGOÀI
+// ==========================================
+async function loadShifts() {
+  try {
+    const { shifts } = await api('/branch/cash-shifts');
+    document.getElementById('shiftHistory').innerHTML = shifts.length
+      ? shifts.map(s => `
+        <div style="border-bottom: 1px solid var(--border); padding: 0.5rem 0;">
+          <strong>Ca ${s.id}</strong> (${s.status === 'OPEN' ? '<span style="color:var(--success)">Đang mở</span>' : 'Đã đóng'})<br>
+          <small>Mở: ${formatDateTime(s.opened_at)} bởi ${escapeHtml(s.opener_name || '')}</small><br>
+          <small>Tiền mở ca: <strong>${vnd(s.opening_cash)}</strong></small>
+        </div>`).join('')
+      : '<p class="tag">Chưa có lịch sử ca.</p>';
+  } catch(e) {}
+}
+
+window.openShift = async function() {
+  const cash = await promptModal({ title: 'Mở ca', label: 'Nhập số tiền mặt đầu ca (VND)', defaultValue: '0' });
+  if (cash === null) return;
+  try {
+    await api('/branch/cash-shifts/open', { method: 'POST', body: { opening_cash: Number(cash) } });
+    showMsg('<div class="msg ok">✓ Đã mở ca mới</div>');
+    loadShifts();
+  } catch (e) { alertModal(e.message); }
+};
+
+window.closeShift = async function() {
+  const cash = await promptModal({ title: 'Chốt ca', label: 'Nhập tổng số tiền mặt thực tế trong két', defaultValue: '0' });
+  if (cash === null) return;
+  
+  try {
+    // Gọi endpoint mới, không cần truyền ID từ frontend nữa
+    const res = await api(`/branch/cash-shifts/close-current`, { 
+      method: 'POST', 
+      body: { closing_cash: Number(cash) } 
+    });
+    
+    await alertModal(`
+      <strong>Chốt ca thành công!</strong><br>
+      - Tiền mong đợi: ${vnd(res.expected_cash)}<br>
+      - Chênh lệch: <strong style="color:${res.variance < 0 ? 'red':'green'}">${vnd(res.variance)}</strong>
+    `);
+    loadShifts();
+  } catch (e) { alertModal(e.message); }
+};
+
+function loadLocalPurchaseOpts() {
+  document.getElementById('lp_ing').innerHTML = '<option value="">-- Chọn nguyên liệu --</option>' + 
+    ingredients.map(i => `<option value="${i.id}">${escapeHtml(i.name)} (${escapeHtml(i.unit)})</option>`).join('');
+}
+
+document.getElementById('addLocalPurchaseBtn').onclick = async () => {
+  const ingId = document.getElementById('lp_ing').value;
+  const qty = Number(document.getElementById('lp_qty').value);
+  const price = Number(document.getElementById('lp_price').value);
+  const note = document.getElementById('lp_note').value.trim();
+
+  if (!ingId || qty <= 0 || price < 0) return alertModal('Vui lòng điền đúng thông tin số lượng và giá.');
+  
+  if (!await confirmModal(`Xác nhận chi tiền mặt để mua ${qty} đơn vị nguyên liệu này?`)) return;
+
+  try {
+    const res = await api('/branch/local-purchases', { method: 'POST', body: { ingredient_id: Number(ingId), quantity: qty, unit_price: price, note } });
+    showMsg(`<div class="msg ok">✓ Đã ghi nhận chi ${vnd(res.total_cost)} và cộng vào kho!</div>`);
+    ['lp_qty', 'lp_price', 'lp_note'].forEach(id => document.getElementById(id).value = '');
+    loadLocalPurchaseOpts(); loadInv();
+  } catch (e) { alertModal(e.message); }
 };
 
 async function init() {
   try { const ing = await api('/branch/ingredients'); ingredients = ing.ingredients; } catch {}
-  loadDashboard(); loadOrders();
+  loadDashboard(); loadOrders(); loadIncomingStock();
 }
 init();
 setInterval(loadDashboard, 20000);

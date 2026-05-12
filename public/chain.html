@@ -17,11 +17,12 @@
 <div class="layout">
   <div id="msg" aria-live="polite"></div>
   <div class="tabs">
-    <button class="active" data-tab="prod">🍔 Sản phẩm &amp; BOM</button>
-    <button data-tab="cat">🗂️ Danh mục</button>
-    <button data-tab="ing">🥬 Nguyên liệu</button>
-    <button data-tab="vou">🎟️ Voucher</button>
-    <button data-tab="rep">📊 Báo cáo</button>
+    <button class="active" data-tab="prod">Sản phẩm &amp; BOM</button>
+    <button data-tab="cat">Danh mục</button>
+    <button data-tab="ing">Nguyên liệu</button>
+    <button data-tab="vou">Voucher</button>
+    <button data-tab="rep">Báo cáo</button>
+    <button data-tab="rec">Đối soát</button>
   </div>
   <section id="tab-prod" class="tab-panel active">
     <div class="card">
@@ -72,13 +73,18 @@
       <h2>🥬 Nguyên liệu</h2>
       <div class="filter-bar"><input id="ingSearch" placeholder="🔎 Tìm nguyên liệu" /></div>
       <div id="ings"></div>
+      
       <h3>+ Thêm nguyên liệu</h3>
       <div class="grid grid-2">
         <div><label for="ni_name">Tên</label><input id="ni_name" /></div>
-        <div><label for="ni_unit">Đơn vị</label><input id="ni_unit" placeholder="g / ml / cái" /></div>
-        <div><label for="ni_cost">Đơn giá</label><input id="ni_cost" type="number" value="0" /></div>
-        <div><label for="ni_min">Tồn an toàn</label><input id="ni_min" type="number" value="0" /></div>
-        <div><label for="ni_reord">Điểm đặt hàng (UC-39)</label><input id="ni_reord" type="number" value="0" /></div>
+        <div class="grid grid-2" style="gap:0.5rem; padding:0">
+          <div><label for="ni_unit">ĐV Cơ bản (Nấu)</label><input id="ni_unit" placeholder="g / ml" /></div>
+          <div><label for="ni_punit">ĐV Nhập (Mua)</label><input id="ni_punit" placeholder="Bao / Thùng" /></div>
+        </div>
+        <div><label for="ni_rate">Tỷ lệ (1 ĐV Nhập = ? ĐV Cơ bản)</label><input id="ni_rate" type="number" value="1" step="0.0001" /></div>
+        <div><label for="ni_cost">Giá nhập (theo ĐV Nhập)</label><input id="ni_cost" type="number" value="0" /></div>
+        <div><label for="ni_min">Tồn an toàn (theo ĐV CB)</label><input id="ni_min" type="number" value="0" /></div>
+        <div><label for="ni_reord">Điểm đặt hàng (theo ĐV CB)</label><input id="ni_reord" type="number" value="0" /></div>
       </div>
       <div class="row-actions"><button id="addIng">Tạo nguyên liệu</button></div>
     </div>
@@ -162,6 +168,38 @@
       <div id="repTop"></div>
     </div>
   </section>
+  <section id="tab-rec" class="tab-panel">
+    <div class="card">
+      <h2>⚖️ Đối soát thanh toán </h2>
+      <p class="tag">Dán dữ liệu từ file Excel/CSV của đối tác (Mã đơn, Số tiền thực thu) để hệ thống tự động đối chiếu.</p>
+      
+      <div class="grid grid-2" style="margin-bottom: 1rem;">
+        <div>
+          <label for="recType">Phương thức đối soát</label>
+          <select id="recType">
+            <option value="COD">Thu hộ COD (Shipper)</option>
+            <option value="ONLINE">Thanh toán Online (Cổng thanh toán)</option>
+          </select>
+        </div>
+        <div>
+          <label for="recFormat">Định dạng dữ liệu nhập</label>
+          <select id="recFormat">
+            <option value="json">JSON Array</option>
+            <option value="csv">CSV (Mã đơn, Số tiền)</option>
+          </select>
+        </div>
+      </div>
+      
+      <label for="recInput">Dữ liệu đối soát</label>
+      <textarea id="recInput" rows="8" placeholder='Ví dụ JSON: [{"order_code":"ORD-123", "partner_amount": 150000}]'></textarea>
+      
+      <div class="row-actions">
+        <button id="btnRecon">🚀 Bắt đầu đối soát</button>
+      </div>
+      
+      <div id="reconResult" style="margin-top:2rem"></div>
+    </div>
+  </section>
 </div>
 <script src="/js/api.js"></script>
 <script>
@@ -169,6 +207,12 @@ const u = requireLogin();
 if (u) document.getElementById('who').textContent = u.full_name + ' · ' + (u.role_code || u.role);
 document.getElementById('logoutBtn').onclick = logout;
 let cats = [], ings = [], branches = [], allProducts = [];
+
+// Hàm định dạng số chuẩn F&B (bỏ thập phân vô nghĩa, thêm dấu chấm)
+function fmtNum(value) {
+  if (value === null || value === undefined || value === '') return '';
+  return Number(value).toLocaleString('vi-VN');
+}
 
 document.querySelectorAll('.tabs button').forEach(b => {
   b.onclick = () => {
@@ -216,8 +260,12 @@ function renderProducts() {
           : '<span style="font-size:1.6rem">🍴</span>') + '</td>' +
         '<td>' + p.id + '</td><td>' + escapeHtml(p.name) + '</td><td>' + escapeHtml(p.category_name) + '</td><td>' + vnd(p.base_price) + '</td>' +
         '<td>' + (p.is_active_chain ? '<span class="badge ok">Đang bán</span>' : '<span class="badge">Ngừng</span>') + '</td>' +
-        '<td><button class="secondary" data-edit="' + p.id + '" style="padding:0.25rem 0.55rem">✏️ Sửa</button>' +
-        '<button class="secondary" data-toggle="' + p.id + '" data-a="' + (p.is_active_chain ? 0 : 1) + '" style="padding:0.25rem 0.55rem">' + (p.is_active_chain ? 'Ngừng' : 'Bán lại') + '</button></td></tr>').join('') +
+        '<td>' +
+          '<button class="secondary" data-edit="' + p.id + '" style="padding:0.25rem 0.55rem">✏️ Sửa</button>' +
+          '<button class="secondary" data-toggle="' + p.id + '" data-a="' + (p.is_active_chain ? 0 : 1) + '" style="padding:0.25rem 0.55rem; margin-left: 4px;">' + (p.is_active_chain ? 'Ngừng' : 'Bán lại') + '</button>' +
+          '<button class="danger" onclick="deleteProduct(' + p.id + ')" style="padding:0.25rem 0.55rem; margin-left: 4px;">🗑️ Xóa</button>' +
+        '</td></tr>'
+      ).join('') +
       '</tbody></table></div>'
     : '<p class="empty"><span class="icon">🔍</span>Không có sản phẩm phù hợp</p>';
   document.getElementById('bom_pid').innerHTML = allProducts.map(p => '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>').join('');
@@ -260,6 +308,15 @@ window.saveProduct = async function(id) {
   } catch (e) { alertModal(e.message); }
 };
 
+window.deleteProduct = async function(id) {
+  if (!await confirmModal('Xác nhận XÓA sản phẩm này? Sản phẩm sẽ bị ẩn khỏi thực đơn toàn chuỗi.', { danger: true })) return;
+  try {
+    await api('/chain/products/' + id, { method: 'DELETE' });
+    showMsg('<div class="msg ok">✓ Đã xóa sản phẩm</div>');
+    loadProducts();
+  } catch (e) { alertModal(e.message); }
+};
+
 async function loadProducts() {
   const r = await api('/chain/products');
   allProducts = r.products;
@@ -271,13 +328,15 @@ function renderIngs() {
   const search = document.getElementById('ingSearch').value.trim().toLowerCase();
   const list = search ? ings.filter(i => i.name.toLowerCase().includes(search)) : ings;
   document.getElementById('ings').innerHTML = list.length
-    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Tên</th><th>ĐV</th><th>Giá</th><th>Tồn AT</th><th></th></tr></thead><tbody>' +
+    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Tên</th><th>ĐV Cơ bản</th><th>ĐV Nhập</th><th>Tỷ lệ</th><th>Giá nhập</th><th>Tồn AT</th><th></th></tr></thead><tbody>' +
       list.map(i => `<tr>
         <td>${i.id}</td>
         <td><strong>${escapeHtml(i.name)}</strong></td>
-        <td>${i.unit}</td>
-        <td>${vnd(i.unit_cost)}</td>
-        <td>${Number(i.safety_stock_min)}</td>
+        <td>${escapeHtml(i.unit)}</td>
+        <td>${escapeHtml(i.purchase_unit || '-')}</td>
+        <td>${Number(i.conversion_rate).toString()}</td>
+        <td>${vnd(Number(i.unit_cost) * Number(i.conversion_rate || 1))}</td>
+        <td>${fmtNum(i.safety_stock_min)}</td>
         <td>
           <button class="secondary" onclick="editIng(${i.id})" style="padding:0.2rem 0.5rem">✏️</button>
           <button class="secondary" onclick="deleteIng(${i.id})" style="padding:0.2rem 0.5rem">🗑️</button>
@@ -295,23 +354,38 @@ document.getElementById('ingSearch').addEventListener('input', renderIngs);
 
 async function loadVouchers() {
   const r = await api('/chain/vouchers');
-  
-  // Hàm phụ để định dạng ngày thành DD/MM/YYYY
   const fmt = (isoStr) => {
     if (!isoStr) return '';
-    const d = new Date(isoStr);
-    return d.toLocaleDateString('vi-VN'); // Trả về định dạng 06/05/2026
+    return new Date(isoStr).toLocaleDateString('vi-VN');
   };
 
   document.getElementById('vouchers').innerHTML = r.vouchers.length
-    ? '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Loại</th><th>Giá trị</th><th>Tối thiểu</th><th>Đã dùng</th><th>Hiệu lực</th></tr></thead><tbody>' +
-      r.vouchers.map(v => '<tr><td><strong>' + escapeHtml(v.code) + '</strong></td><td>' + v.discount_type + '</td>' +
-        '<td>' + (v.discount_type === 'PERCENT' ? v.discount_value + '%' : vnd(v.discount_value)) + '</td>' +
-        '<td>' + vnd(v.min_order_amount) + '</td><td>' + v.used_count + '/' + v.max_uses + '</td>' +
-        `<td>${fmt(v.valid_from)} → ${fmt(v.valid_to)}</td></tr>`).join('') +
+    ? '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Trạng thái</th><th>Loại</th><th>Giá trị</th><th>Tối thiểu</th><th>Đã dùng</th><th>Hiệu lực</th><th>Thao tác</th></tr></thead><tbody>' +
+      r.vouchers.map(v => `<tr>
+        <td><strong>${escapeHtml(v.code)}</strong></td>
+        <td>${v.is_active ? '<span class="badge ok">Đang chạy</span>' : '<span class="badge warn">Đã dừng</span>'}</td>
+        <td>${v.discount_type}</td>
+        <td>${v.discount_type === 'PERCENT' ? v.discount_value + '%' : vnd(v.discount_value)}</td>
+        <td>${vnd(v.min_order_amount)}</td>
+        <td>${v.used_count}/${v.max_uses}</td>
+        <td>${fmt(v.valid_from)} → ${fmt(v.valid_to)}</td>
+        <td>
+          <button class="secondary" onclick="toggleVoucher(${v.id}, ${v.is_active ? 0 : 1})" style="padding:0.25rem 0.55rem">
+            ${v.is_active ? '⏸️ Tạm dừng' : '▶️ Kích hoạt'}
+          </button>
+        </td>
+      </tr>`).join('') +
       '</tbody></table></div>'
     : '<p class="empty"><span class="icon">🎟️</span>Chưa có voucher nào</p>';
 }
+
+// Bổ sung hàm toggle ngay bên dưới loadVouchers:
+window.toggleVoucher = async function(id, targetState) {
+  try {
+    await api('/chain/vouchers/' + id + '/toggle', { method: 'PATCH', body: { is_active: !!targetState } });
+    loadVouchers();
+  } catch (e) { alertModal(e.message); }
+};
 
 async function loadBranchesForVoucher() {
   const r = await api('/chain/branches');
@@ -356,19 +430,26 @@ document.getElementById('addCat').onclick = async () => {
 document.getElementById('addIng').onclick = async () => {
   const name = document.getElementById('ni_name').value.trim();
   const unit = document.getElementById('ni_unit').value.trim();
+  const purchase_unit = document.getElementById('ni_punit').value.trim();
+  const conversion_rate = Number(document.getElementById('ni_rate').value);
   const cost = Number(document.getElementById('ni_cost').value);
   const min = Number(document.getElementById('ni_min').value);
   const reord = Number(document.getElementById('ni_reord').value);
-  if (!name || !unit) return showMsg('<div class="msg err">Vui lòng nhập tên và đơn vị</div>');
+
+  if (!name || !unit) return showMsg('<div class="msg err">Vui lòng nhập tên và ĐV cơ bản</div>');
+  if (conversion_rate <= 0) return showMsg('<div class="msg err">Tỷ lệ quy đổi phải > 0</div>');
   if (cost < 0) return showMsg('<div class="msg err">Đơn giá không được âm</div>');
-  if (min < 0) return showMsg('<div class="msg err">Tồn an toàn không được âm</div>');
-  if (reord < 0) return showMsg('<div class="msg err">Điểm đặt hàng không được âm</div>');
+
   try {
     await api('/chain/ingredients', { method:'POST', body:{
-      name, unit, unit_cost: cost, safety_stock_min: min, reorder_point: reord,
+      name, unit, purchase_unit, conversion_rate, 
+      purchase_price_input: cost, 
+      safety_stock_min: min, reorder_point: reord,
     }});
-    showMsg('<div class="msg ok">✓ Đã tạo</div>');
-    ['ni_name','ni_unit'].forEach(id => document.getElementById(id).value = '');
+    showMsg('<div class="msg ok">✓ Đã tạo nguyên liệu</div>');
+    ['ni_name','ni_unit', 'ni_punit'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('ni_rate').value = "1";
+    document.getElementById('ni_cost').value = "0"; 
     loadIngs();
   } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
 };
@@ -462,13 +543,18 @@ window.deleteCat = async function(id) {
 // --- 5. EDIT/DELETE INGREDIENT ---
 window.editIng = function(id) {
   const ing = ings.find(i => i.id === id);
+  let purchaseCost = Number(ing.unit_cost || 0) * Number(ing.conversion_rate || 1);
+  purchaseCost = Math.round(purchaseCost); // Làm tròn thành số nguyên VND
+  
   showModal(`<h3>✏️ Sửa nguyên liệu #${id}</h3>
     <label>Tên</label><input id="ei_name" value="${escapeHtml(ing.name)}" />
     <div class="grid grid-2">
-      <div><label>Đơn vị</label><input id="ei_unit" value="${escapeHtml(ing.unit)}" /></div>
-      <div><label>Đơn giá</label><input id="ei_cost" type="number" value="${ing.unit_cost}" /></div>
-      <div><label>Tồn an toàn</label><input id="ei_min" type="number" value="${ing.safety_stock_min}" /></div>
-      <div><label>Điểm đặt hàng</label><input id="ei_reord" type="number" value="${ing.reorder_point}" /></div>
+      <div><label>ĐV Cơ bản</label><input id="ei_unit" value="${escapeHtml(ing.unit)}" /></div>
+      <div><label>ĐV Nhập</label><input id="ei_punit" value="${escapeHtml(ing.purchase_unit || '')}" /></div>
+      <div><label>Tỷ lệ quy đổi</label><input id="ei_rate" type="number" step="0.0001" value="${Number(ing.conversion_rate || 1)}" /></div>
+      <div><label>Giá nhập (ĐV Nhập)</label><input id="ei_cost" type="number" value="${purchaseCost}" /></div>
+      <div><label>Tồn an toàn (ĐV CB)</label><input id="ei_min" type="number" value="${ing.safety_stock_min}" /></div>
+      <div><label>Điểm đặt (ĐV CB)</label><input id="ei_reord" type="number" value="${ing.reorder_point}" /></div>
     </div>
     <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
       <button class="secondary" onclick="closeModal()">Hủy</button>
@@ -476,11 +562,21 @@ window.editIng = function(id) {
     </div>`);
 };
 window.saveIng = async function(id) {
+  const name = document.getElementById('ei_name').value.trim();
+  const rate = Number(document.getElementById('ei_rate').value);
+  const cost = Number(document.getElementById('ei_cost').value);
+
+  // Thêm 3 dòng chặn lỗi này:
+  if (!name) return alertModal('Tên nguyên liệu không được để trống');
+  if (rate <= 0) return alertModal('Tỷ lệ quy đổi phải lớn hơn 0');
+  if (cost < 0) return alertModal('Giá nhập không được âm');
   try {
     await api('/chain/ingredients/' + id, { method:'PATCH', body:{
       name: document.getElementById('ei_name').value.trim(),
       unit: document.getElementById('ei_unit').value.trim(),
-      unit_cost: Number(document.getElementById('ei_cost').value),
+      purchase_unit: document.getElementById('ei_punit').value.trim(),
+      conversion_rate: Number(document.getElementById('ei_rate').value),
+      purchase_price_input: Number(document.getElementById('ei_cost').value),
       safety_stock_min: Number(document.getElementById('ei_min').value),
       reorder_point: Number(document.getElementById('ei_reord').value)
     }});
@@ -544,8 +640,8 @@ document.getElementById('loadRep').onclick = async () => {
     
     document.getElementById('repBox').innerHTML =
       '<div class="kpi"><div class="l">Doanh thu</div><div class="v">' + vnd(r.revenue.revenue) + '</div></div>' +
-      '<div class="kpi"><div class="l">Số đơn hoàn tất</div><div class="v">' + r.revenue.order_count + '</div></div>' +
-      '<div class="kpi"><div class="l">Đơn hủy</div><div class="v">' + r.cancelled + '</div></div>';
+      '<div class="kpi"><div class="l">Số đơn hoàn tất</div><div class="v">' + fmtNum(r.revenue.order_count) + '</div></div>' +
+      '<div class="kpi"><div class="l">Đơn hủy</div><div class="v">' + fmtNum(r.cancelled) + '</div></div>';
 
     let detailHtml = '<h3>Chi tiết doanh thu</h3>';
     if (r.details && r.details.length > 0) {
@@ -556,7 +652,7 @@ document.getElementById('loadRep').onclick = async () => {
         if (type === 'year') label = 'Năm ' + label;
         return `<tr>
                   <td><strong>${escapeHtml(label)}</strong></td>
-                  <td>${d.orders}</td>
+                  <td>${fmtNum(d.orders)}</td>
                   <td>${vnd(d.revenue)}</td>
                 </tr>`;
       }).join('');
@@ -568,10 +664,65 @@ document.getElementById('loadRep').onclick = async () => {
 
     document.getElementById('repTop').innerHTML = r.top_products.length
       ? '<div class="table-wrap"><table><thead><tr><th>Sản phẩm</th><th>Số lượng bán</th></tr></thead><tbody>' +
-        r.top_products.map(t => '<tr><td><strong>' + escapeHtml(t.product_name) + '</strong></td><td>' + t.qty + '</td></tr>').join('') + '</tbody></table></div>'
+        r.top_products.map(t => '<tr><td><strong>' + escapeHtml(t.product_name) + '</strong></td><td>' + fmtNum(t.qty) + '</td></tr>').join('') + '</tbody></table></div>'
       : '<p class="tag">Chưa có sản phẩm nào được bán ra.</p>';
 
   } catch (e) { alertModal('Lỗi tải báo cáo: ' + e.message); }
+};
+
+// --- UC-18: LOGIC ĐỐI SOÁT ---
+document.getElementById('btnRecon').onclick = async () => {
+  const raw = document.getElementById('recInput').value.trim();
+  const format = document.getElementById('recFormat').value;
+  const type = document.getElementById('recType').value;
+  
+  if(!raw) return alertModal('Vui lòng nhập dữ liệu đối soát');
+  
+  let data = [];
+  try {
+    if(format === 'json') {
+      data = JSON.parse(raw);
+    } else {
+      data = raw.split(/\r?\n/) // Hỗ trợ cả Windows và Mac
+        .filter(line => line.trim() !== '') // Bỏ qua các dòng trống
+        .map(line => {
+          const [code, amt] = line.split(',');
+          return { order_code: code?.trim(), partner_amount: Number(amt?.trim()) };
+        });
+    }
+  } catch(e) { 
+    return alertModal('Dữ liệu không đúng định dạng. Vui lòng kiểm tra lại.'); 
+  }
+
+  try {
+    const res = await api('/chain/reconcile', { method: 'POST', body: { partner_data: data, payment_method: type } });
+    
+    let html = `<div class="kpi-grid">
+      <div class="kpi"><div class="l">Khớp thành công</div><div class="v" style="color:green">${res.matched.length}</div></div>
+      <div class="kpi"><div class="l">Lệch/Sai lệch</div><div class="v" style="color:red">${res.mismatched.length}</div></div>
+      <div class="kpi"><div class="l">Không tìm thấy mã</div><div class="v">${res.not_found.length}</div></div>
+    </div>`;
+
+    if(res.mismatched.length > 0) {
+      html += `<h3 style="margin-top: 1.5rem">⚠️ Danh sách đơn lệch/sai phương thức</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Mã đơn</th><th>HT ghi nhận</th><th>Đối tác báo cáo</th><th>Lý do</th></tr></thead>
+          <tbody>` +
+        res.mismatched.map(m => `<tr><td><strong>${escapeHtml(m.code)}</strong></td><td>${vnd(m.local_total)}</td><td>${vnd(m.partner_amount)}</td><td><span class="badge err">${escapeHtml(m.reason)}</span></td></tr>`).join('') + 
+        `</tbody></table></div>`;
+    }
+    
+    if(res.not_found.length > 0) {
+      html += `<h3 style="margin-top: 1.5rem">❓ Mã đơn không tồn tại trên hệ thống</h3><ul>` + 
+        res.not_found.map(n => `<li><strong>${escapeHtml(n.code)}</strong> (Số tiền đối tác: ${vnd(n.partner_amount)})</li>`).join('') + 
+        `</ul>`;
+    }
+    
+    document.getElementById('reconResult').innerHTML = html;
+    showMsg('<div class="msg ok">✓ Đối soát hoàn tất</div>');
+  } catch (e) {
+    alertModal('Lỗi khi đối soát: ' + e.message);
+  }
 };
 
 // --- 7. INIT ---

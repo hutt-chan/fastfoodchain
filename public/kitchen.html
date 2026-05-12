@@ -15,6 +15,7 @@
   </div>
 </header>
 <div class="layout">
+  <input type="text" id="qrScanner" style="position: absolute; left: -9999px;" autofocus autocomplete="off" />
   <div id="msg" aria-live="polite"></div>
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem">
@@ -75,27 +76,129 @@ function formatTime(dateString) {
   */
 }
 
-function renderCard(o, cls, btnLabel, action) {
-  // Render danh sách món ăn rõ ràng, có phân cách, highlight số lượng và ghi chú
-  const items = o.items || [];
-  const itemsHtml = items.map(i => `
-    <div style="display:flex; justify-content:space-between; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed #ccc;">
-      <div style="padding-right: 10px;">
+// Thay thế hàm renderCard cũ bằng hàm này
+function renderCard(o, cls) {
+  const isCooking = o.status === 'COOKING';
+  const isNew = o.status === 'AWAITING_KITCHEN';
+
+  // Render danh sách món ăn
+  const itemsHtml = (o.items || []).map(i => {
+    let itemAction = '';
+    
+    // UC-34: Nếu đơn đang nấu, hiển thị nút "Xong" cho từng món
+    if (isCooking) {
+      if (i.cook_status === 'READY') {
+        itemAction = '<span style="color:var(--success); font-weight:bold; font-size: 0.85rem;">✓ Đã xong</span>';
+      } else {
+        itemAction = `<button class="secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border-color: var(--primary); color: var(--primary);" onclick="markItemReady(${o.id}, ${i.id}, this)">Xong</button>`;
+      }
+    }
+
+    return `
+    <div style="display:flex; justify-content:space-between; align-items: center; padding: 6px 0; border-bottom: 1px dashed #ccc;">
+      <div style="padding-right: 10px; flex:1">
         <span style="font-weight: 500;">${escapeHtml(i.product_name)}</span>
         ${i.note ? `<div style="color: #d9534f; font-size: 0.8rem; font-style: italic;">📝 ${escapeHtml(i.note)}</div>` : ''}
       </div>
-      <strong style="font-size: 1.1rem; color: #0275d8;">x${i.quantity}</strong>
-    </div>
-  `).join('');
+      <strong style="font-size: 1.1rem; color: #0275d8; margin-right: 10px;">x${i.quantity}</strong>
+      ${itemAction}
+    </div>`;
+  }).join('');
 
-  return '<div class="kds-card ' + cls + '"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem">' +
-    '<strong>' + escapeHtml(o.order_code) + '</strong>' +
-    '<small class="tag">🕒 ' + formatTime(o.kitchen_started_at || o.created_at) + '</small></div>' +
-    '<div style="margin:0.8rem 0;font-size:0.95rem; background: #f9f9f9; padding: 5px; border-radius: 4px;">' + 
-      (itemsHtml || '<em>Không có món</em>') + 
-    '</div>' +
-    '<div class="row-actions"><button data-act="' + o.id + ':' + action + '">' + btnLabel + '</button></div></div>';
+  // Xác định Nút hành động chính của Đơn hàng
+  let orderAction = '';
+  
+  if (isNew) {
+    if (!o.kitchen_ack_at) {
+      orderAction = `<button data-act="${o.id}:acknowledge" class="secondary" style="border-color: #f0ad4e; color: #f0ad4e;">👋 Tiếp nhận đơn</button>`;
+    } else {
+      orderAction = `<button data-act="${o.id}:start">▶ Bắt đầu nấu</button>`;
+    }
+  } else if (isCooking) {
+    // BỔ SUNG NÚT NÀY CHO TRẠNG THÁI COOKING
+    orderAction = `<button data-act="${o.id}:finish-cook" style="width: 100%;">Tất cả đã xong</button>`;
+  } else if (o.status === 'READY_PACKAGING') {
+    orderAction = `
+      <button class="danger" style="padding: 0.4rem; font-size: 0.85rem;" onclick="revertOrder(${o.id})" title="Thiếu món/Nấu sai">⚠ Báo lỗi</button>
+      <button data-act="${o.id}:package">📦 Đã đóng gói</button>
+    `;
+  }
+
+  return `<div class="kds-card ${cls}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem">
+      <strong>${escapeHtml(o.order_code)}</strong>
+      <small class="tag">🕒 ${formatTime(o.kitchen_started_at || o.created_at)}</small>
+    </div>
+    <div style="margin:0.8rem 0;font-size:0.95rem; background: #f9f9f9; padding: 5px; border-radius: 4px;">
+      ${itemsHtml || '<em>Không có món</em>'}
+    </div>
+    ${orderAction ? `<div class="row-actions">${orderAction}</div>` : ''}
+  </div>`;
 }
+
+// Bổ sung hàm này để xử lý API hoàn thành từng món
+window.markItemReady = async function(orderId, itemId, btnElement) {
+  btnElement.disabled = true;
+  btnElement.textContent = '...';
+  try {
+    const q = adminBranch ? '?branch_id=' + adminBranch : '';
+    await api(`/kitchen/orders/${orderId}/items/${itemId}/cook-status${q}`, { 
+      method: 'PATCH', 
+      body: { cook_status: 'READY' } 
+    });
+    // Load lại KDS ngay lập tức để cập nhật UI
+    load();
+  } catch (e) {
+    btnElement.disabled = false;
+    btnElement.textContent = 'Xong';
+    alertModal(e.message);
+  }
+};
+
+// UC-35: Hàm xử lý lùi trạng thái (Báo lỗi đóng gói)
+window.revertOrder = async function(id) {
+  const reason = await promptModal({ title: 'Báo lỗi đơn', label: 'Lý do (vd: Thiếu gà rán, Đổ nước)', defaultValue: 'Sai sót đóng gói' });
+  if (reason === null) return;
+  try {
+    await api('/kitchen/orders/' + id + '/revert-to-cook' + (adminBranch ? '?branch_id=' + adminBranch : ''), { 
+      method: 'POST', body: { reason } 
+    });
+    load();
+  } catch(e) { alertModal(e.message); }
+};
+
+// UC-35: Lắng nghe súng quét mã vạch
+document.getElementById('qrScanner').addEventListener('change', async function(e) {
+  const val = e.target.value.trim();
+  e.target.value = ''; // Xóa input chuẩn bị cho lần quét sau
+  if(!val) return;
+  
+  // Trích xuất ID đơn từ mã vạch (Giả định mã vạch chứa ID dạng số)
+  const match = val.match(/\d+/);
+  if(match) {
+    const id = match[0];
+    try {
+      showMsg('<div class="msg" style="background:#17a2b8;color:#fff">Đang xử lý mã quét...</div>');
+      await api('/kitchen/orders/' + id + '/package' + (adminBranch ? '?branch_id=' + adminBranch : ''), { method:'POST', body:{} });
+      showMsg('<div class="msg ok">📦 Quét thành công! Đã đóng gói đơn ' + id + '</div>');
+      load();
+    } catch(err) {
+      alertModal('Lỗi quét mã: ' + err.message);
+    }
+  }
+});
+
+// Giữ focus cho input tàng hình để luôn sẵn sàng hứng mã quét
+document.addEventListener('click', () => {
+  if(!document.getElementById('modalBack')) { // <-- Đã sửa ở đây
+    document.getElementById('qrScanner').focus();
+  }
+});
+
+// Chống giật cục (UX): Tạm dừng auto-refresh nếu chuột đang di chuyển trong KDS
+let isHovering = false;
+document.querySelector('.layout').addEventListener('mouseenter', () => isHovering = true);
+document.querySelector('.layout').addEventListener('mouseleave', () => isHovering = false);
 
 async function load() {
   try {
@@ -117,9 +220,9 @@ async function load() {
     const empty = '<p class="empty"><span class="icon">🍳</span>Trống</p>';
     
     // Gọi renderCard không cần truyền detailMap nữa, chỉ truyền `o`
-    document.getElementById('col1').innerHTML = c1.length ? c1.map(o => renderCard(o, '', '▶ Bắt đầu nấu', 'start')).join('') : empty;
-    document.getElementById('col2').innerHTML = c2.length ? c2.map(o => renderCard(o, 'cooking', '✓ Nấu xong', 'finish-cook')).join('') : empty;
-    document.getElementById('col3').innerHTML = c3.length ? c3.map(o => renderCard(o, 'ready', '📦 Đã đóng gói', 'package')).join('') : empty;
+    document.getElementById('col1').innerHTML = c1.length ? c1.map(o => renderCard(o, '')).join('') : empty;
+    document.getElementById('col2').innerHTML = c2.length ? c2.map(o => renderCard(o, 'cooking')).join('') : empty;
+    document.getElementById('col3').innerHTML = c3.length ? c3.map(o => renderCard(o, 'ready')).join('') : empty;
 
     document.querySelectorAll('[data-act]').forEach(b => {
       b.onclick = async () => {
@@ -142,7 +245,12 @@ async function load() {
 (async () => {
   await setupAdminBar();
   load();
-  setInterval(load, 10000);
+  setInterval(() => {
+    // Chỉ refresh nếu không hover chuột và không có Modal nào đang mở
+    if (!isHovering && !document.getElementById('modalBack')) { // <-- Đã sửa ở đây
+      load();
+    }
+  }, 10000);
 })();
 </script>
 </body>

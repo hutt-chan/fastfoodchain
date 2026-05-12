@@ -83,22 +83,57 @@ router.get('/cart', auth(['CUSTOMER']), async (req, res) => {
   res.json({ items });
 });
 
+// 1. Cập nhật API thêm món để nhận và lưu Topping (options_json)
 router.post('/cart/items', auth(['CUSTOMER']), async (req, res) => {
-  const { branch_id, product_id, quantity, note } = req.body;
-  if (!branch_id || !product_id) return res.status(400).json({ error: 'Thieu du lieu' });
+  const { branch_id, product_id, quantity, note, options_json } = req.body;
+  if (!branch_id || !product_id) return res.status(400).json({ error: 'Thiếu dữ liệu' });
+  
   const [[bm]] = await pool.execute(
-    'SELECT is_available, manual_off FROM branch_menu WHERE branch_id = ? AND product_id = ?',
+    'SELECT is_available FROM branch_menu WHERE branch_id = ? AND product_id = ?',
     [branch_id, product_id]
   );
-  if (!bm || !bm.is_available) {
-    return res.status(400).json({ error: 'Mon khong kha dung tai chi nhanh nay' });
-  }
-  await pool.execute(
-    `INSERT INTO cart_items (user_id, branch_id, product_id, quantity, note)
-     VALUES (?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity), note = VALUES(note)`,
-    [req.user.id, branch_id, product_id, quantity || 1, note || null]
+  
+  if (!bm || !bm.is_available) return res.status(400).json({ error: 'Món không khả dụng' });
+
+  // Chuẩn hóa chuỗi JSON topping để so sánh
+  const optsJsonStr = JSON.stringify(options_json || []);
+
+  // 1. Lấy tất cả các dòng của món này trong giỏ hiện tại
+  const [existing] = await pool.execute(
+    'SELECT id, options_json FROM cart_items WHERE user_id = ? AND branch_id = ? AND product_id = ?',
+    [req.user.id, branch_id, product_id]
   );
+
+  // 2. Tìm dòng có tuỳ chọn Topping y hệt
+  let matchId = null;
+  for (const row of existing) {
+      // Đảm bảo so sánh chuỗi chính xác dù DB trả về string hay object
+      const rowOpts = typeof row.options_json === 'string' 
+          ? row.options_json 
+          : JSON.stringify(row.options_json || []);
+          
+      if (rowOpts === optsJsonStr) {
+          matchId = row.id;
+          break;
+      }
+  }
+
+  // 3. Cập nhật hoặc Thêm mới
+  if (matchId) {
+      // Đã có món với tuỳ chọn y hệt -> Cập nhật số lượng
+      await pool.execute(
+          'UPDATE cart_items SET quantity = quantity + ? WHERE id = ?',
+          [quantity || 1, matchId]
+      );
+  } else {
+      // Tuỳ chọn mới (hoặc không topping) -> Thêm dòng mới
+      await pool.execute(
+          `INSERT INTO cart_items (user_id, branch_id, product_id, quantity, note, options_json)
+           VALUES (?,?,?,?,?,?)`,
+          [req.user.id, branch_id, product_id, quantity || 1, note || null, optsJsonStr]
+      );
+  }
+  
   res.json({ ok: true });
 });
 
@@ -115,6 +150,28 @@ router.patch('/cart/items/:id', auth(['CUSTOMER']), async (req, res) => {
 router.delete('/cart/items/:id', auth(['CUSTOMER']), async (req, res) => {
   await pool.execute('DELETE FROM cart_items WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
   res.json({ ok: true });
+});
+
+router.get('/vouchers', auth(['CUSTOMER']), async (req, res) => {
+  const branchId = req.query.branch_id;
+  if (!branchId) return res.status(400).json({ error: 'Thieu branch_id' });
+
+  const today = new Date().toISOString().slice(0, 10);
+  
+  // Lấy các voucher đang active, trong thời gian hiệu lực, còn lượt dùng
+  // và áp dụng cho chi nhánh hiện tại (hoặc áp dụng cho toàn hệ thống: branch_id IS NULL)
+  const [vouchers] = await pool.execute(
+    `SELECT id, code, discount_type, discount_value, min_order_amount 
+     FROM vouchers 
+     WHERE is_active = 1 
+       AND valid_from <= ? 
+       AND valid_to >= ? 
+       AND used_count < max_uses 
+       AND (branch_id IS NULL OR branch_id = ?)`,
+    [today, today, branchId]
+  );
+  
+  res.json({ vouchers });
 });
 
 router.post('/vouchers/validate', auth(['CUSTOMER']), async (req, res) => {
@@ -170,8 +227,21 @@ router.post('/orders', auth(['CUSTOMER']), async (req, res) => {
     }
     let subtotal = 0;
     const lines = cart.map((c) => {
-      subtotal += Number(c.unit_price) * c.quantity;
-      return { product_id: c.product_id, quantity: c.quantity, unit_price: c.unit_price, name: c.name };
+      // Parse topping để cộng tiền
+      const opts = typeof c.options_json === 'string' ? JSON.parse(c.options_json) : (c.options_json || []);
+      let toppingPrice = 0;
+      opts.forEach(t => toppingPrice += Number(t.price));
+      
+      const itemTotalUnitPrice = Number(c.unit_price) + toppingPrice;
+      subtotal += itemTotalUnitPrice * c.quantity;
+      
+      return { 
+        product_id: c.product_id, 
+        quantity: c.quantity, 
+        unit_price: itemTotalUnitPrice, // Giá gốc
+        name: c.name,
+        options_json: c.options_json // Giữ lại json topping
+      };
     });
     let discount = 0;
     // UC-04: Khóa hàng voucher (FOR UPDATE) + double-check số lần dùng & hiệu lực ngay trước khi chốt đơn
@@ -239,8 +309,8 @@ router.post('/orders', auth(['CUSTOMER']), async (req, res) => {
     const orderId = ins.insertId;
     for (const line of lines) {
       await conn.execute(
-        `INSERT INTO order_items (order_id, product_id, product_name, quantity, unit_price) VALUES (?,?,?,?,?)`,
-        [orderId, line.product_id, line.name, line.quantity, line.unit_price]
+        `INSERT INTO order_items (order_id, product_id, product_name, quantity, unit_price, options_json) VALUES (?,?,?,?,?,?)`,
+        [orderId, line.product_id, line.name, line.quantity, line.unit_price, JSON.stringify(line.options_json || [])]
       );
     }
     await conn.execute('INSERT INTO order_status_history (order_id, status, note) VALUES (?,?,?)', [
@@ -352,6 +422,43 @@ router.post('/orders/:id/after-online-pay', auth(['CUSTOMER']), async (req, res)
   }
 });
 
+// 2. API POST /orders/:id/reorder: Sao chép đơn cũ vào giỏ hàng [cite: 23]
+router.post('/orders/:id/reorder', auth(['CUSTOMER']), async (req, res) => {
+  const orderId = req.params.id;
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[order]] = await conn.execute('SELECT branch_id FROM orders WHERE id = ? AND user_id = ?', [orderId, req.user.id]);
+    if (!order) throw new Error('Không tìm thấy đơn hàng');
+
+    // Lấy các món từ đơn cũ [cite: 68]
+    const [items] = await conn.execute('SELECT product_id, quantity, options_json FROM order_items WHERE order_id = ?', [orderId]);
+
+    for (const item of items) {
+      // Kiểm tra món còn kinh doanh và còn hàng không [cite: 17, 23]
+      const [[avail]] = await conn.execute(
+        `SELECT is_available FROM branch_menu bm JOIN products p ON p.id = bm.product_id
+         WHERE bm.branch_id = ? AND bm.product_id = ? AND p.is_deleted = 0`,
+        [order.branch_id, item.product_id]
+      );
+
+      if (avail && avail.is_available) {
+        await conn.execute(
+          `INSERT INTO cart_items (user_id, branch_id, product_id, quantity, options_json)
+           VALUES (?, ?, ?, ?, ?)`,
+          [req.user.id, order.branch_id, item.product_id, item.quantity, JSON.stringify(item.options_json)]
+        );
+      }
+    }
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (e) {
+    await conn.rollback();
+    res.status(400).json({ error: e.message });
+  } finally { conn.release(); }
+});
+
 /**
  * UC-05: Auto-cancel các đơn ONLINE đã quá payment_deadline.
  * Gọi định kỳ trong các endpoint đọc đơn để giải phóng tồn kho ảo.
@@ -403,6 +510,23 @@ router.get('/orders/:id', auth(['CUSTOMER']), async (req, res) => {
     [o.id]
   );
   res.json({ order: o, items, delivery: dt || null, history });
+});
+
+// Lấy danh sách Topping (is_optional = 1) từ định mức nguyên liệu (BOM)
+router.get('/products/:id/toppings', async (req, res) => {
+  try {
+    const [toppings] = await pool.execute(
+      // Sửa dòng này:
+      `SELECT i.id, i.name, pb.extra_price AS price
+      FROM product_bom pb
+      JOIN ingredients i ON i.id = pb.ingredient_id
+      WHERE pb.product_id = ? AND pb.is_optional = 1`,
+      [req.params.id]
+    );
+    res.json({ toppings });
+  } catch (e) {
+    res.status(500).json({ error: 'Lỗi khi tải danh sách tùy chọn' });
+  }
 });
 
 router.post('/orders/:id/cancel', auth(['CUSTOMER']), async (req, res) => {

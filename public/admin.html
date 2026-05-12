@@ -20,6 +20,7 @@
     <button class="active" data-tab="cfg">⚙️ Cấu hình</button>
     <button data-tab="branches">🏬 Chi nhánh</button>
     <button data-tab="users">👥 Người dùng</button>
+    <button data-tab="perms">🛡️ Phân quyền</button>
     <button data-tab="audit">📜 Audit log</button>
   </div>
   <section id="tab-cfg" class="tab-panel active">
@@ -50,6 +51,10 @@
         <div><label for="nb_lat">Vĩ độ</label><input id="nb_lat" type="number" step="0.0000001" /></div>
         <div><label for="nb_lng">Kinh độ</label><input id="nb_lng" type="number" step="0.0000001" /></div>
         <div><label for="nb_rad">Bán kính giao (km)</label><input id="nb_rad" type="number" value="5" /></div>
+        <div><label for="nb_open">Giờ mở cửa</label><input id="nb_open" type="time" value="08:00" /></div>
+        <div><label for="nb_close">Giờ đóng cửa</label><input id="nb_close" type="time" value="22:00" /></div>
+        <div><label for="eb_open">Giờ mở cửa</label><input id="eb_open" type="time" /></div>
+        <div><label for="eb_close">Giờ đóng cửa</label><input id="eb_close" type="time" /></div>
       </div>
       <div class="row-actions"><button id="addBranch">+ Tạo chi nhánh</button></div>
     </div>
@@ -110,12 +115,24 @@
     </div>
     
   </section>
+  <section id="tab-perms" class="tab-panel">
+    <div class="card">
+      <h2>🛡️ Ma trận phân quyền (UC-12)</h2>
+      <p class="tag">Tích chọn để gán quyền cho từng vai trò hệ thống.</p>
+      <div id="perms-matrix-container" class="table-wrap">
+        </div>
+      <div class="row-actions">
+        <button id="savePermsBtn" class="primary">💾 Lưu thiết lập ma trận</button>
+      </div>
+    </div>
+  </section>
   <section id="tab-audit" class="tab-panel">
     <div class="card">
       <h2>📜 Nhật ký kiểm toán (UC-14)</h2>
       <div class="filter-bar">
         <input id="auditSearch" placeholder="🔎 Tìm theo hành động/module" />
         <select id="auditModule"><option value="">Tất cả module</option></select>
+        <button id="exportAuditBtn" class="secondary" style="margin-left:auto">📥 Xuất CSV</button>
       </div>
       <div id="audit"></div>
     </div>
@@ -206,25 +223,89 @@ function renderUsers() {
   const search = document.getElementById('userSearch').value.trim().toLowerCase();
   const role = document.getElementById('userRole').value;
   const st = document.getElementById('userStatus').value;
+
   let list = allUsers;
-  if (search) list = list.filter(x => (x.full_name + ' ' + x.phone + ' ' + (x.email || '')).toLowerCase().includes(search));
+
+  if (search) {
+    list = list.filter(x =>
+      (x.full_name + ' ' + x.phone + ' ' + (x.email || ''))
+        .toLowerCase()
+        .includes(search)
+    );
+  }
+
   if (role) list = list.filter(x => x.role_code === role);
+
   if (st !== '') list = list.filter(x => String(x.is_active) === st);
+
   document.getElementById('users').innerHTML = list.length
     ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Họ tên</th><th>SĐT</th><th>Email</th><th>Vai trò</th><th>CN</th><th>TT</th><th></th></tr></thead><tbody>' +
-      list.map(x => '<tr><td>' + x.id + '</td><td>' + escapeHtml(x.full_name) + '</td><td>' + escapeHtml(x.phone) + '</td><td>' + escapeHtml(x.email || '') + '</td><td>' + x.role_code + '</td><td>' + (x.branch_id || '') + '</td>' +
-        '<td>' + (x.is_active ? '<span class="badge ok">Mở</span>' : '<span class="badge" style="background:var(--danger-bg);color:var(--danger)">Khóa</span>') + '</td>' +
-        '<td><button class="secondary" data-u="' + x.id + '" data-a="' + (x.is_active ? 0 : 1) + '" style="padding:0.25rem 0.55rem">' + (x.is_active ? 'Khóa' : 'Mở') + '</button></td></tr>').join('') +
+      list.map(x =>
+        '<tr>' +
+          '<td>' + x.id + '</td>' +
+          '<td>' + escapeHtml(x.full_name) + '</td>' +
+          '<td>' + escapeHtml(x.phone) + '</td>' +
+          '<td>' + escapeHtml(x.email || '') + '</td>' +
+          '<td>' + x.role_code + '</td>' +
+          '<td>' + (x.branch_id || '') + '</td>' +
+          '<td>' +
+            (x.is_active
+              ? '<span class="badge ok">Mở</span>'
+              : '<span class="badge" style="background:var(--danger-bg);color:var(--danger)">Khóa</span>'
+            ) +
+          '</td>' +
+
+          // Cột thao tác
+          '<td>' +
+            '<button class="secondary" data-u="' + x.id + '" data-a="' + (x.is_active ? 0 : 1) + '" style="padding:0.25rem 0.55rem; margin-right:5px;">' +
+              (x.is_active ? 'Khóa' : 'Mở') +
+            '</button>' +
+            '<button class="secondary" onclick="resetUserPassword(' + x.id + ')" style="padding:0.25rem 0.55rem; background: var(--warning-bg); color: var(--warning);">' +
+              'Reset Pass' +
+            '</button>' +
+            '<button class="danger" onclick="deleteUser(' + x.id + ')" style="padding:0.25rem 0.55rem;">' +
+              'Xóa' +
+            '</button>' +
+          '</td>' +
+        '</tr>'
+      ).join('') +
       '</tbody></table></div>'
     : '<p class="empty"><span class="icon">🔍</span>Không có người dùng phù hợp</p>';
+
   document.querySelectorAll('[data-u]').forEach(b => b.onclick = async () => {
     const lock = !Number(b.dataset.a);
-    const reason = await promptModal({ title: lock ? 'Khóa tài khoản' : 'Mở tài khoản', label: 'Lý do', defaultValue: 'Quản trị' });
+
+    const reason = await promptModal({
+      title: lock ? 'Khóa tài khoản' : 'Mở tài khoản',
+      label: 'Lý do',
+      defaultValue: 'Quản trị'
+    });
+
     if (reason === null) return;
-    await api('/admin/users/' + b.dataset.u, { method:'PATCH', body:{ is_active: !!Number(b.dataset.a), reason } });
+
+    await api('/admin/users/' + b.dataset.u, {
+      method: 'PATCH',
+      body: {
+        is_active: !!Number(b.dataset.a),
+        reason
+      }
+    });
+
     await loadUsers();
   });
 }
+
+window.deleteUser = async function(id) {
+  if (!await confirmModal('Bạn có chắc chắn muốn XÓA tài khoản này? Thao tác này sẽ ẩn người dùng khỏi hệ thống.', { danger: true })) return;
+  try {
+    await api('/admin/users/' + id, { method: 'DELETE' });
+    showMsg('<div class="msg ok">✓ Đã xóa tài khoản</div>');
+    await loadUsers();
+  } catch (e) {
+    alertModal(e.message);
+  }
+};
+
 async function loadUsers() {
   const { users } = await api('/admin/users');
   allUsers = users;
@@ -234,19 +315,98 @@ async function loadUsers() {
   sel.innerHTML = '<option value="">Tất cả vai trò</option>' + roles.map(r => '<option value="' + r + '"' + (r === cur ? ' selected' : '') + '>' + r + '</option>').join('');
   renderUsers();
 }
+
+async function resetUserPassword(userId) {
+  if (!await confirmModal('Bạn có chắc chắn muốn đặt lại mật khẩu cho người dùng này?')) return;
+
+  try {
+    const res = await withLoading('Đang xử lý...', async () => {
+      return await api('/admin/users/' + userId + '/reset-password', { method: 'POST' });
+    });
+
+    // Hiển thị mật khẩu tạm thời trong một modal thông báo
+    await alertModal(
+      '<strong>Mật khẩu đã được đặt lại!</strong><br><br>' +
+      'Mật khẩu tạm thời là: <code style="font-size:1.2rem; color:var(--primary);">' + res.tempPassword + '</code><br><br>' +
+      'Vui lòng cung cấp mật khẩu này cho nhân viên. Họ sẽ phải đổi mật khẩu ngay sau khi đăng nhập.'
+    );
+  } catch (e) {
+    showMsg('<div class="msg err">Lỗi: ' + escapeHtml(e.message) + '</div>');
+  }
+}
+
 ['userSearch','userRole','userStatus'].forEach(id => document.getElementById(id).addEventListener('input', renderUsers));
+
+// Sửa hàm renderAudit trong admin.html
+// Thêm hàm xử lý Xuất CSV
+document.getElementById('exportAuditBtn').onclick = () => {
+  // Lấy dữ liệu đang hiển thị (đã lọc)
+  const search = document.getElementById('auditSearch').value.trim().toLowerCase();
+  const mod = document.getElementById('auditModule').value;
+  let list = allLogs;
+  if (search) list = list.filter(l => ((l.action || '') + ' ' + (l.module || '') + ' ' + (l.detail || '')).toLowerCase().includes(search));
+  if (mod) list = list.filter(l => l.module === mod);
+
+  // Tạo nội dung CSV
+  let csv = 'Thời điểm,User ID,Hành động,Module,IP,Chi tiết\n';
+  list.forEach(l => {
+    const detailSafe = (l.detail || '').replace(/"/g, '""'); // Escape ngoặc kép
+    csv += `"${formatDateTime(l.created_at)}","${l.user_id || 'System'}","${l.action}","${l.module || ''}","${l.ip || ''}","${detailSafe}"\n`;
+  });
+
+  // Tải file
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' }); // Thêm BOM để Excel đọc tiếng Việt
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `AuditLog_${new Date().getTime()}.csv`;
+  a.click();
+};
+
+// Sửa hàm renderAudit để Highlight các hành động nhạy cảm
 function renderAudit() {
   const search = document.getElementById('auditSearch').value.trim().toLowerCase();
   const mod = document.getElementById('auditModule').value;
   let list = allLogs;
   if (search) list = list.filter(l => ((l.action || '') + ' ' + (l.module || '') + ' ' + (l.detail || '')).toLowerCase().includes(search));
   if (mod) list = list.filter(l => l.module === mod);
+  
   document.getElementById('audit').innerHTML = list.length
-    ? '<div class="table-wrap"><table><thead><tr><th>Thời điểm</th><th>User</th><th>Hành động</th><th>Module</th><th>Chi tiết</th><th>IP</th></tr></thead><tbody>' +
-      list.map(l => '<tr><td>' + formatDateTime(l.created_at) + '</td><td>' + (l.user_id || '') + '</td><td><span class="badge">' + l.action + '</span></td><td>' + (l.module || '') + '</td>' +
-      '<td><code style="font-size:0.75rem">' + escapeHtml((l.detail || '').slice(0, 120)) + '</code></td><td>' + escapeHtml(l.ip || '') + '</td></tr>').join('') +
+    ? '<div class="table-wrap"><table><thead><tr><th>Thời điểm</th><th>User</th><th>Hành động</th><th>Module</th><th>Chi tiết</th><th>Thao tác</th></tr></thead><tbody>' +
+      list.map(l => {
+        // UC-14: Highlight bằng màu đỏ các cảnh báo bảo mật
+        const isSecurityAlert = ['USER_LOCK', 'BRANCH_FORCE_CLOSE', 'USER_DELETE'].includes(l.action);
+        const rowStyle = isSecurityAlert ? 'background-color: #ffebee;' : '';
+        const badgeStyle = isSecurityAlert ? 'background: var(--danger); color: white;' : '';
+        const preview = l.detail ? escapeHtml(l.detail.slice(0, 60)) + '...' : '';
+
+        return `<tr style="${rowStyle}">
+          <td>${formatDateTime(l.created_at)}</td>
+          <td>${l.user_id || 'System'}</td>
+          <td><span class="badge" style="${badgeStyle}">${l.action}</span></td>
+          <td>${l.module || ''}</td>
+          <td><code>${preview}</code></td>
+          <td><button class="secondary" onclick='showAuditDetail(${JSON.stringify(l)})'>Xem</button></td>
+        </tr>`;
+      }).join('') +
       '</tbody></table></div>'
-    : '<p class="empty"><span class="icon">🔍</span>Không có log phù hợp</p>';
+    : '<p class="empty">Không có log phù hợp</p>';
+}
+
+// Hàm hiển thị chi tiết Log (Thêm vào script)
+async function showAuditDetail(log) {
+  const formattedDetail = JSON.stringify(JSON.parse(log.detail || '{}'), null, 2);
+  await alertModal(`
+    <div style="text-align:left">
+      <p><strong>Hành động:</strong> ${log.action}</p>
+      <p><strong>Module:</strong> ${log.module}</p>
+      <p><strong>Thời điểm:</strong> ${formatDateTime(log.created_at)}</p>
+      <p><strong>IP:</strong> ${log.ip}</p>
+      <hr>
+      <p><strong>Dữ liệu chi tiết:</strong></p>
+      <pre style="background:#f4f4f4; padding:10px; border-radius:4px; max-height:300px; overflow:auto">${escapeHtml(formattedDetail)}</pre>
+    </div>
+  `, { title: '📜 Chi tiết nhật ký' });
 }
 async function loadAudit() {
   const { logs } = await api('/admin/audit');
@@ -262,8 +422,20 @@ document.getElementById('saveCfg').onclick = async () => {
   const k = document.getElementById('ck').value.trim();
   const v = document.getElementById('cv').value;
   if (!k) return showMsg('<div class="msg err">Vui lòng nhập khóa</div>');
-  try { await api('/admin/config', { method:'PATCH', body:{ key: k, value: v } });
-    showMsg('<div class="msg ok">✓ Đã lưu</div>'); loadCfg();
+  
+  // UC-10: Xác nhận OTP cho thông số nhạy cảm
+  const sensitiveKeys = ['base_shipping_fee', 'max_delivery_radius_km'];
+  if (sensitiveKeys.includes(k)) {
+    const otp = prompt('CẢNH BÁO: Đây là thông số nhạy cảm. Vui lòng nhập mã OTP để xác nhận (Nhập "123456" để test):');
+    if (otp !== '123456') {
+      return showMsg('<div class="msg err">Sai mã OTP! Thao tác bị hủy.</div>');
+    }
+  }
+
+  try { 
+    await api('/admin/config', { method:'PATCH', body:{ key: k, value: v } });
+    showMsg('<div class="msg ok">✓ Đã lưu</div>'); 
+    loadCfg();
   } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
 };
 document.getElementById('refreshMenus').onclick = async () => {
@@ -380,6 +552,59 @@ document.getElementById('addUserBtn').onclick = async () => {
   }
 };
 
+async function loadPermsMatrix() {
+  const { roles, permissions, mapping } = await api('/admin/permissions/matrix');
+  
+  let html = '<table><thead><tr><th>Quyền hạn \ Vai trò</th>';
+  roles.forEach(r => html += `<th>${escapeHtml(r.name_vi)}</th>`);
+  html += '</tr></thead><tbody>';
+
+  permissions.forEach(p => {
+    html += `<tr>
+      <td><strong>${escapeHtml(p.name_vi)}</strong><br><small>${p.module}</small></td>`;
+    roles.forEach(r => {
+      // Kiểm tra xem quyền p.id có được gán cho role r.id không
+      const isChecked = mapping.some(m => m.role_id === r.id && m.permission_id === p.id);
+      html += `<td style="text-align:center">
+        <input type="checkbox" class="perm-cb" data-role="${r.id}" data-perm="${p.id}" ${isChecked ? 'checked' : ''}>
+      </td>`;
+    });
+    html += '</tr>';
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('perms-matrix-container').innerHTML = html;
+}
+
+// Xử lý lưu ma trận
+document.getElementById('savePermsBtn').onclick = async () => {
+  // Yêu cầu nhập mật khẩu thay vì chỉ confirm
+  const adminPwd = prompt('BẢO MẬT: Vui lòng nhập mật khẩu Admin của bạn để xác nhận đổi quyền:');
+  if (!adminPwd) return showMsg('<div class="msg err">Đã hủy thao tác lưu phân quyền.</div>');
+  
+  const checkboxes = document.querySelectorAll('.perm-cb');
+  const rolesData = {}; 
+  checkboxes.forEach(cb => {
+    const rId = cb.dataset.role;
+    if (!rolesData[rId]) rolesData[rId] = [];
+    if (cb.checked) rolesData[rId].push(Number(cb.dataset.perm));
+  });
+
+  try {
+    await withLoading('Đang lưu...', async () => {
+      for (const rId in rolesData) {
+        // Gửi kèm password xuống backend
+        await api('/admin/permissions/matrix', { 
+          method: 'POST', 
+          body: { role_id: Number(rId), permission_ids: rolesData[rId], admin_password: adminPwd } 
+        });
+      }
+    });
+    showMsg('<div class="msg ok">✓ Đã cập nhật ma trận quyền thành công!</div>');
+  } catch (e) {
+    showMsg('<div class="msg err">Lỗi: ' + e.message + '</div>');
+  }
+};
 // Gọi thêm loadFormOptions() trong hàm init()
 async function init() {
   try { 
@@ -387,7 +612,8 @@ async function init() {
     await loadBranches(); 
     await loadUsers(); 
     await loadAudit(); 
-    await loadFormOptions(); // Load option cho form thêm user
+    await loadFormOptions();
+    await loadPermsMatrix();
   } catch (e) { 
     showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); 
   }

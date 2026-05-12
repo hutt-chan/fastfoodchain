@@ -54,6 +54,9 @@ router.get('/kds', K, async (req, res) => {
  * - acknowledge: ghi `kitchen_ack_at` để đo thời gian phản hồi của bếp, không đổi state.
  * - start: chuyển AWAITING_KITCHEN → COOKING.
  */
+/**
+ * UC-33: Tách "Xác nhận nhận đơn" và "Bắt đầu nấu" thành 2 bước.
+ */
 router.post(
   '/orders/:id/acknowledge',
   K,
@@ -64,7 +67,8 @@ router.post(
     if (req.user.role !== 'ADMIN' && Number(o.branch_id) !== Number(bid)) {
       return res.status(403).json({ error: 'Không thuộc chi nhánh bạn' });
     }
-    if (o.status !== OrderStatus.AWAITING_KITCHEN) {
+    // ĐÃ FIX TEXT TRỰC TIẾP
+    if (o.status !== 'AWAITING_KITCHEN') {
       return res.status(400).json({ error: 'Đơn không ở trạng thái chờ bếp' });
     }
     if (o.kitchen_ack_at) return res.json({ ok: true, already: true });
@@ -82,14 +86,13 @@ router.post(
     if (req.user.role !== 'ADMIN' && !bid) {
       return res.status(400).json({ error: 'Thiếu branch_id (query ?branch_id= cho KDS)' });
     }
-    await transitionOrder(req.params.id, OrderStatus.COOKING, {
+    // ĐÃ FIX TEXT TRỰC TIẾP
+    await transitionOrder(req.params.id, 'COOKING', {
       note: 'Bếp bắt đầu chế biến',
       branchId: bid,
       role: req.user.role,
     });
-    // Đảm bảo có kitchen_ack_at — nếu bếp bỏ qua bước ack, ack ngay khi start
     await pool.execute('UPDATE orders SET kitchen_ack_at = COALESCE(kitchen_ack_at, NOW()) WHERE id = ?', [req.params.id]);
-    // UC-34: đặt cook_status = COOKING cho item nếu chưa
     await pool.execute(
       `UPDATE order_items SET cook_status = 'COOKING', cook_started_at = COALESCE(cook_started_at, NOW())
        WHERE order_id = ? AND cook_status = 'PENDING'`,
@@ -102,7 +105,6 @@ router.post(
 
 /**
  * UC-34: Chuyển từng món ra trạm chờ đóng gói (per-item).
- * Khi tất cả item READY → tự chuyển order sang READY_PACKAGING.
  */
 router.patch(
   '/orders/:orderId/items/:itemId/cook-status',
@@ -113,6 +115,13 @@ router.patch(
       return res.status(400).json({ error: 'cook_status không hợp lệ' });
     }
     const bid = branchFilter(req);
+    
+    // ĐÃ FIX TEXT TRỰC TIẾP
+    const [[orderRow]] = await pool.execute('SELECT status FROM orders WHERE id = ?', [req.params.orderId]);
+    if (!orderRow || orderRow.status !== 'COOKING') {
+      return res.status(400).json({ error: 'Đơn hàng chưa bắt đầu nấu hoặc đã qua khâu đóng gói' });
+    }
+
     const [[item]] = await pool.execute(
       `SELECT oi.*, o.branch_id AS order_branch FROM order_items oi
        JOIN orders o ON o.id = oi.order_id
@@ -123,27 +132,26 @@ router.patch(
     if (req.user.role !== 'ADMIN' && Number(item.order_branch) !== Number(bid)) {
       return res.status(403).json({ error: 'Không thuộc chi nhánh bạn' });
     }
+    
     const finishedAt = cook_status === 'READY' ? 'cook_finished_at = NOW(), ' : '';
     const startedAt = cook_status === 'COOKING' ? 'cook_started_at = COALESCE(cook_started_at, NOW()), ' : '';
     await pool.execute(
       `UPDATE order_items SET ${startedAt}${finishedAt}cook_status = ? WHERE id = ?`,
       [cook_status, req.params.itemId]
     );
-    // Nếu tất cả item READY → tự chuyển order sang READY_PACKAGING (UC-34)
+    
     if (cook_status === 'READY') {
       const [[remain]] = await pool.execute(
         `SELECT COUNT(*) AS c FROM order_items WHERE order_id = ? AND cook_status != 'READY'`,
         [req.params.orderId]
       );
       if (Number(remain.c) === 0) {
-        const [[orderRow]] = await pool.execute('SELECT status FROM orders WHERE id = ?', [req.params.orderId]);
-        if (orderRow && orderRow.status === OrderStatus.COOKING) {
-          await transitionOrder(req.params.orderId, OrderStatus.READY_PACKAGING, {
-            note: 'Tất cả món đã sẵn sàng (UC-34)',
-            branchId: bid,
-            role: req.user.role,
-          });
-        }
+        // ĐÃ FIX TEXT TRỰC TIẾP
+        await transitionOrder(req.params.orderId, 'READY_PACKAGING', {
+          note: 'Tất cả món đã sẵn sàng (UC-34)',
+          branchId: bid,
+          role: req.user.role,
+        });
       }
     }
     res.json({ ok: true });
@@ -155,16 +163,19 @@ router.post(
   K,
   asyncHandler(async (req, res) => {
     const bid = branchFilter(req);
-    if (req.user.role !== 'ADMIN' && !bid) {
-      return res.status(400).json({ error: 'Thiếu branch_id' });
+    // ĐÃ FIX TEXT TRỰC TIẾP
+    const [[orderRow]] = await pool.execute('SELECT status FROM orders WHERE id = ?', [req.params.id]);
+    if (!orderRow || orderRow.status !== 'COOKING') {
+      return res.status(400).json({ error: 'Chỉ có thể hoàn thành khi đơn đang được nấu' });
     }
-    // UC-34: khi staff bấm "Nấu xong" cho cả đơn, set tất cả item -> READY
+
     await pool.execute(
       `UPDATE order_items SET cook_status = 'READY', cook_finished_at = COALESCE(cook_finished_at, NOW())
        WHERE order_id = ?`,
       [req.params.id]
     );
-    await transitionOrder(req.params.id, OrderStatus.READY_PACKAGING, {
+    // ĐÃ FIX TEXT TRỰC TIẾP
+    await transitionOrder(req.params.id, 'READY_PACKAGING', {
       note: 'Đã nấu xong toàn bộ',
       branchId: bid,
       role: req.user.role,
@@ -178,15 +189,64 @@ router.post(
   K,
   asyncHandler(async (req, res) => {
     const bid = branchFilter(req);
-    if (req.user.role !== 'ADMIN' && !bid) {
-      return res.status(400).json({ error: 'Thiếu branch_id' });
+    // ĐÃ FIX TEXT TRỰC TIẾP
+    const [[orderRow]] = await pool.execute('SELECT status FROM orders WHERE id = ?', [req.params.id]);
+    if (!orderRow || orderRow.status !== 'READY_PACKAGING') {
+      return res.status(400).json({ error: 'Đơn chưa sẵn sàng để đóng gói' });
     }
-    await transitionOrder(req.params.id, OrderStatus.AWAITING_SHIPPER, {
+
+    // ĐÃ FIX TEXT TRỰC TIẾP
+    await transitionOrder(req.params.id, 'AWAITING_SHIPPER', {
       note: 'Đã đóng gói — chờ shipper',
       branchId: bid,
       role: req.user.role,
     });
     res.json({ ok: true });
+  })
+);
+
+// ĐÃ BỌC TRANSACTION VÀ RÚT GỌN CỘT LỊCH SỬ ĐỂ CHỐNG CRASH
+router.post(
+  '/orders/:id/revert-to-cook',
+  K,
+  asyncHandler(async (req, res) => {
+    const { reason } = req.body;
+    
+    const [[orderRow]] = await pool.execute('SELECT status FROM orders WHERE id = ?', [req.params.id]);
+    if (!orderRow || orderRow.status !== 'READY_PACKAGING') {
+      return res.status(400).json({ error: 'Chỉ có thể báo lỗi khi đơn đang ở khu vực chờ đóng gói' });
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // 1. Kéo đơn về COOKING
+      await conn.execute(
+        'UPDATE orders SET status = ? WHERE id = ?',
+        ['COOKING', req.params.id]
+      );
+
+      // 2. Ghi lịch sử cơ bản (Tránh truyền thừa cột gây lỗi)
+      await conn.execute(
+        'INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)',
+        [req.params.id, 'COOKING', reason || 'Sai sót đóng gói - Quay lại bếp']
+      );
+
+      // 3. Reset toàn bộ món ăn về COOKING để có thể bấm Xong lại
+      await conn.execute(
+        `UPDATE order_items SET cook_status = 'COOKING' WHERE order_id = ?`,
+        [req.params.id]
+      );
+
+      await conn.commit();
+      res.json({ ok: true });
+    } catch (e) {
+      await conn.rollback(); // Lỗi thì quay xe, không update nửa vời
+      throw e;
+    } finally {
+      conn.release();
+    }
   })
 );
 

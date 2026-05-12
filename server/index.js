@@ -7,6 +7,8 @@ const pool = require('./db');
 const { refreshBranchProductAvailability } = require('./services/inventoryService');
 const { errorHandler } = require('./middleware/errorHandler');
 
+const { startCronJobs } = require('./cronJobs');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -35,6 +37,8 @@ app.post('/api/system/refresh-menus', async (req, res) => {
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use(errorHandler);
+
+startCronJobs();
 
 app.listen(PORT, () => {
   console.log(`API + static http://localhost:${PORT}`);

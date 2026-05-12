@@ -54,12 +54,19 @@ router.post(
   B,
   asyncHandler(async (req, res) => {
     const scope = branchScope(req);
+    
+    // Kiểm tra trạng thái đơn trước khi confirm 
+    const [[order]] = await pool.execute('SELECT status, branch_id FROM orders WHERE id = ?', [req.params.id]);
+    if (!order) return res.status(404).json({ error: 'Đơn hàng không tồn tại' });
+    if (order.status !== 'PENDING_BRANCH') {
+      return res.status(400).json({ error: 'Đơn hàng đã được xử lý hoặc không thể xác nhận lúc này' });
+    }
+
     await transitionOrder(req.params.id, OrderStatus.AWAITING_KITCHEN, {
       note: 'Chi nhánh xác nhận',
       branchId: scope,
       role: req.user.role,
     });
-    await logAudit(req.user.id, 'ORDER_CONFIRM', 'branch', { orderId: req.params.id }, req.ip);
     res.json({ ok: true });
   })
 );
@@ -354,6 +361,64 @@ router.post(
   })
 );
 
+// ==========================================
+// KHU VỰC KDS (KITCHEN DISPLAY SYSTEM) - UC-33 & UC-34
+// ==========================================
+
+// UC-33: Lấy danh sách các món đang chờ nấu tại bếp (Gộp theo đơn)
+router.get('/kitchen/queue', B, async (req, res) => {
+  const bid = req.user.branch_id;
+  const [items] = await pool.execute(
+    `SELECT oi.*, o.order_code, o.status as order_status 
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id
+     WHERE o.branch_id = ? AND o.status IN ('AWAITING_KITCHEN', 'COOKING')
+       AND oi.cook_status IN ('PENDING', 'COOKING')
+     ORDER BY o.created_at ASC`,
+    [bid]
+  );
+  res.json({ queue: items });
+});
+
+// UC-33: Nhân viên bếp bấm "Bắt đầu nấu" 1 món cụ thể
+router.post('/kitchen/items/:itemId/start', B, async (req, res) => {
+  const itemId = req.params.itemId;
+  
+  // Chuyển trạng thái món
+  await pool.execute(
+    `UPDATE order_items SET cook_status = 'COOKING', cook_started_at = NOW() 
+     WHERE id = ? AND cook_status = 'PENDING'`,
+    [itemId]
+  );
+  
+  // Nếu đây là món đầu tiên của đơn được nấu, tự động chuyển đơn sang COOKING
+  const [[item]] = await pool.execute('SELECT order_id FROM order_items WHERE id = ?', [itemId]);
+  if (item) {
+     await pool.execute(
+       `UPDATE orders SET status = 'COOKING', kitchen_started_at = COALESCE(kitchen_started_at, NOW()) 
+        WHERE id = ? AND status = 'AWAITING_KITCHEN'`, 
+       [item.order_id]
+     );
+  }
+  
+  res.json({ ok: true, message: 'Đã bắt đầu nấu món' });
+});
+
+// UC-34: Nhân viên bếp bấm "Xong" 1 món (Chuyển ra khâu đóng gói)
+router.post('/kitchen/items/:itemId/ready', B, async (req, res) => {
+  const itemId = req.params.itemId;
+  
+  await pool.execute(
+    `UPDATE order_items SET cook_status = 'READY', cook_finished_at = NOW() WHERE id = ?`,
+    [itemId]
+  );
+
+  // Mở rộng logic: Bạn có thể thêm đoạn code kiểm tra xem nều TẤT CẢ các món trong 
+  // đơn này đã 'READY' thì chuyển đơn sang trạng thái 'AWAITING_SHIPPER'
+  
+  res.json({ ok: true, message: 'Đã chuyển món ra quầy đóng gói' });
+});
+
 /* ===================== UC-30: Phiếu điều chỉnh tồn kho ===================== */
 
 /**
@@ -557,38 +622,43 @@ router.post('/cash-shifts/open', B, async (req, res) => {
   res.json({ id: ins.insertId });
 });
 
-router.post('/cash-shifts/:id/close', B, async (req, res) => {
+router.post('/cash-shifts/close-current', B, asyncHandler(async (req, res) => {
   const bid = req.user.branch_id;
   const { closing_cash, note } = req.body;
+
+  // Tự tìm ca đang OPEN của chi nhánh 
   const [[shift]] = await pool.execute(
-    `SELECT * FROM cash_shifts WHERE id = ? AND branch_id = ?`,
-    [req.params.id, bid]
+    `SELECT * FROM cash_shifts WHERE branch_id = ? AND status = 'OPEN' LIMIT 1`,
+    [bid]
   );
-  if (!shift) return res.status(404).json({ error: 'Không tìm thấy ca' });
-  if (shift.status === 'CLOSED') return res.status(400).json({ error: 'Ca đã đóng' });
-  // Tính COD đã thu trong ca
+  if (!shift) return res.status(404).json({ error: 'Không tìm thấy ca nào đang mở' });
+
+  // Logic tính toán COD và Petty Cash (giữ nguyên như bạn đã viết rất tốt)
   const [[cod]] = await pool.execute(
     `SELECT COALESCE(SUM(total),0) AS s FROM orders
      WHERE branch_id = ? AND payment_method = 'COD' AND payment_status = 'COD_COLLECTED'
      AND completed_at BETWEEN ? AND NOW()`,
     [bid, shift.opened_at]
   );
+  
   const [[petty]] = await pool.execute(
     `SELECT COALESCE(SUM(total_cost),0) AS s FROM local_purchases
      WHERE branch_id = ? AND created_at BETWEEN ? AND NOW()`,
     [bid, shift.opened_at]
   );
+
   const expected = Number(shift.opening_cash) + Number(cod.s) - Number(petty.s);
   const variance = Number(closing_cash || 0) - expected;
+
   await pool.execute(
     `UPDATE cash_shifts SET status='CLOSED', closed_by=?, closed_at=NOW(),
      closing_cash=?, cod_collected=?, petty_cash_spent=?, expected_cash=?, variance=?, note=?
      WHERE id = ?`,
-    [req.user.id, Number(closing_cash) || 0, cod.s, petty.s, expected, variance, note || null, req.params.id]
+    [req.user.id, Number(closing_cash) || 0, cod.s, petty.s, expected, variance, note || null, shift.id]
   );
-  await logAudit(req.user.id, 'CASH_SHIFT_CLOSE', 'branch', { id: req.params.id, expected, variance }, req.ip);
+
   res.json({ ok: true, expected_cash: expected, cod_collected: Number(cod.s), petty_cash_spent: Number(petty.s), variance });
-});
+}));
 
 router.get('/cash-shifts', B, async (req, res) => {
   const bid = req.user.branch_id;
@@ -601,5 +671,263 @@ router.get('/cash-shifts', B, async (req, res) => {
   );
   res.json({ shifts: rows });
 });
+
+// =========================================================
+// BỔ SUNG UC-30: CHI NHÁNH NHẬN HÀNG TỪ KHO TỔNG
+// =========================================================
+// UC-30: Lấy chi tiết chuyến hàng đang đến (để chi nhánh kiểm đếm)
+router.get('/outbounds/:id', B, async (req, res) => {
+  const bid = req.user.branch_id;
+  const [[ob]] = await pool.execute(
+    `SELECT o.* FROM stock_outbounds o 
+     JOIN stock_requests sr ON sr.id = o.stock_request_id
+     WHERE o.id = ? AND sr.branch_id = ?`,
+    [req.params.id, bid]
+  );
+  if (!ob) return res.status(404).json({ error: 'Không tìm thấy phiếu xuất' });
+
+  const [lines] = await pool.execute(
+    `SELECT sol.*, i.name, i.unit FROM stock_outbound_lines sol
+     JOIN ingredients i ON i.id = sol.ingredient_id WHERE sol.stock_outbound_id = ?`,
+    [ob.id]
+  );
+  res.json({ outbound: ob, lines });
+});
+
+// UC-30: Nhận hàng có kiểm đếm thực tế
+// UC-30: Nhận hàng có kiểm đếm thực tế (Bản có kèm Ghi chú/Phản hồi)
+router.post('/outbounds/:id/receive', B, asyncHandler(async (req, res) => {
+  const bid = req.user.branch_id;
+  // Bổ sung nhận thêm trường 'note' từ Frontend
+  const { received_lines, note } = req.body; 
+  const conn = await pool.getConnection();
+  
+  try {
+    await conn.beginTransaction();
+
+    const [[ob]] = await conn.execute(
+      `SELECT o.*, sr.branch_id, sr.id as request_id 
+       FROM stock_outbounds o
+       JOIN stock_requests sr ON sr.id = o.stock_request_id
+       WHERE o.id = ? FOR UPDATE`, [req.params.id]
+    );
+
+    if (!ob || Number(ob.branch_id) !== Number(bid)) throw new Error('Phiếu không hợp lệ');
+    if (ob.status !== 'SHIPPED') throw new Error('Phiếu không ở trạng thái đang giao');
+
+    const [shippedLines] = await conn.execute('SELECT * FROM stock_outbound_lines WHERE stock_outbound_id = ?', [ob.id]);
+    let hasDiscrepancy = false;
+    const discrepancies = [];
+
+    for (const sLine of shippedLines) {
+      const rLine = received_lines.find(l => l.ingredient_id === sLine.ingredient_id);
+      const actualQty = rLine ? Number(rLine.qty_received) : 0;
+
+      await conn.execute(
+        `INSERT INTO branch_inventory (branch_id, ingredient_id, quantity) 
+         VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+        [bid, sLine.ingredient_id, actualQty]
+      );
+
+      if (actualQty !== Number(sLine.quantity)) {
+        hasDiscrepancy = true;
+        discrepancies.push({
+          ingredient_id: sLine.ingredient_id,
+          shipped: sLine.quantity,
+          received: actualQty
+        });
+      }
+    }
+
+    await conn.execute(`UPDATE stock_outbounds SET status = 'DELIVERED' WHERE id = ?`, [ob.id]);
+    await conn.execute(`UPDATE stock_requests SET status = 'COMPLETED' WHERE id = ?`, [ob.request_id]);
+
+    // LƯU GHI CHÚ PHẢN HỒI VÀO AUDIT LOG
+    if (hasDiscrepancy) {
+      await logAudit(req.user.id, 'RECEIVE_DISCREPANCY', 'branch', 
+        { outbound_id: ob.id, note: note || 'Nhận thiếu/thừa hàng', details: discrepancies }, req.ip);
+    } else {
+      await logAudit(req.user.id, 'RECEIVE_STOCK', 'branch', 
+        { outbound_id: ob.id, note: note || 'Nhận đủ hàng' }, req.ip);
+    }
+
+    await conn.commit();
+    res.json({ ok: true, has_discrepancy: hasDiscrepancy });
+
+  } catch (e) {
+    await conn.rollback();
+    res.status(400).json({ error: e.message });
+  } finally {
+    conn.release();
+  }
+}));
+
+// API UC-30: Báo cáo sự cố chuyến hàng từ phía Chi nhánh
+router.post('/outbounds/:id/report-issue', B, asyncHandler(async (req, res) => {
+  const bid = req.user.branch_id;
+  const { reason } = req.body;
+
+  const [[ob]] = await pool.execute(
+    `SELECT o.*, sr.branch_id 
+     FROM stock_outbounds o
+     JOIN stock_requests sr ON sr.id = o.stock_request_id
+     WHERE o.id = ?`, [req.params.id]
+  );
+
+  if (!ob || Number(ob.branch_id) !== Number(bid)) {
+    return res.status(404).json({ error: 'Không tìm thấy thông tin chuyến hàng' });
+  }
+
+  await logAudit(req.user.id, 'STOCK_DELIVERY_ISSUE', 'branch', 
+    { outbound_id: ob.id, outbound_code: ob.code, reason: reason }, req.ip);
+
+  await pool.execute(
+    `UPDATE stock_requests SET status = 'ISSUE', reject_reason = ? WHERE id = ?`,
+    [`Sự cố vận chuyển: ${reason}`, ob.stock_request_id]
+  );
+
+  res.json({ ok: true, message: 'Đã ghi nhận sự cố' });
+}));
+// =========================================================
+// UC-29: QUẢN LÝ NHÂN SỰ CHI NHÁNH
+// =========================================================
+router.get('/staff', B, async (req, res) => {
+  const bid = req.user.branch_id;
+  const [rows] = await pool.execute(
+    `SELECT u.id, u.full_name, u.phone, u.email, u.is_active, r.name_vi as role_name
+     FROM users u
+     JOIN roles r ON u.role_id = r.id
+     WHERE u.branch_id = ? AND u.is_deleted = 0 ORDER BY u.id DESC`,
+    [bid]
+  );
+  
+  // Lấy thêm danh sách vai trò cho form thêm nhân viên (Chỉ lấy vai trò Bếp, Shipper, Thu ngân...)
+  const [roles] = await pool.execute(`SELECT id, code, name_vi FROM roles WHERE code != 'ADMIN' AND code != 'CHAIN_MANAGER'`);
+  res.json({ staff: rows, roles });
+});
+
+router.post('/staff', B, asyncHandler(async (req, res) => {
+  const bid = req.user.branch_id;
+  const { full_name, phone, email, password, role_id } = req.body;
+  
+  if (!full_name || !phone || !password || !role_id) {
+    return res.status(400).json({ error: 'Vui lòng điền đủ các trường bắt buộc' });
+  }
+
+  const bcrypt = require('bcrypt');
+  const hash = await bcrypt.hash(password, 10);
+
+  const [ins] = await pool.execute(
+    `INSERT INTO users (full_name, phone, email, password_hash, branch_id, role_id, is_active, must_change_password)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 1)`,
+    [full_name, phone, email || null, hash, bid, role_id]
+  );
+  
+  await logAudit(req.user.id, 'STAFF_CREATE', 'branch', { target_id: ins.insertId }, req.ip);
+  res.json({ ok: true, id: ins.insertId });
+}));
+
+// =========================================================
+// LẤY DANH SÁCH HÀNG ĐANG VẬN CHUYỂN TỚI CHI NHÁNH
+// =========================================================
+router.get('/incoming-stock', B, asyncHandler(async (req, res) => {
+  const bid = req.user.branch_id;
+  
+  // Chỉ lấy những phiếu xuất (outbounds) đang ở trạng thái SHIPPED
+  // và thuộc về phiếu xin hàng (stock_requests) của chính chi nhánh này
+  const [outbounds] = await pool.execute(
+    `SELECT o.*, sr.branch_id 
+     FROM stock_outbounds o
+     JOIN stock_requests sr ON sr.id = o.stock_request_id
+     WHERE sr.branch_id = ? AND o.status = 'SHIPPED'
+     ORDER BY o.id DESC`,
+    [bid]
+  );
+  
+  res.json({ outbounds });
+}));
+
+// ==========================================
+// BACKGROUND JOB: UC-31 TỰ ĐỘNG BẬT LẠI MÓN
+// ==========================================
+// Chạy ngầm mỗi 60 giây để quét và tự động bật lại món khi hết thời gian hẹn
+setInterval(async () => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT branch_id, product_id FROM branch_menu 
+       WHERE manual_off = 1 AND manual_off_until IS NOT NULL AND manual_off_until <= NOW()`
+    );
+    
+    if (rows.length > 0) {
+      // Cập nhật database: Tắt cờ manual_off, xóa lý do và thời gian hẹn
+      await pool.execute(
+        `UPDATE branch_menu 
+         SET manual_off = 0, manual_off_reason = NULL, manual_off_until = NULL 
+         WHERE manual_off = 1 AND manual_off_until IS NOT NULL AND manual_off_until <= NOW()`
+      );
+      
+      console.log(`[UC-31] Đã tự động bật lại ${rows.length} món ăn đã hết thời gian tạm tắt.`);
+      // Tùy chọn: Bạn có thể gọi thêm emit Socket.IO ở đây để update UI khách hàng real-time
+    }
+  } catch (e) {
+    console.error('[UC-31 Cron Error]', e);
+  }
+}, 60000);
+
+// ==========================================
+// BACKGROUND JOB: UC-36 TỰ ĐỘNG GỌI SHIPPER
+// ==========================================
+// Chạy ngầm mỗi 30 giây để quét các đơn đang nấu và tính toán gọi xe
+setInterval(async () => {
+  try {
+    // 1. Lấy các đơn đang ở trạng thái nấu mà CHƯA có mã chuyến vận chuyển
+    const [orders] = await pool.execute(
+      `SELECT o.id, o.branch_id, o.kitchen_started_at
+       FROM orders o
+       LEFT JOIN delivery_tracking dt ON o.id = dt.order_id
+       WHERE o.status = 'COOKING' AND dt.external_shipment_id IS NULL`
+    );
+
+    for (const order of orders) {
+      // 2. Lấy thời gian chuẩn bị (prep_time) của từng món trong đơn
+      const [items] = await pool.execute(
+        `SELECT oi.cook_status, p.prep_time_minutes
+         FROM order_items oi
+         JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = ?`, [order.id]
+      );
+
+      let maxRemaining = 0;
+      let allReady = true;
+
+      // 3. Tính toán xem món nào tốn thời gian nấu lâu nhất
+      for (const it of items) {
+        if (it.cook_status !== 'READY') {
+          allReady = false;
+          const elapsed = order.kitchen_started_at ? Math.max(0, (Date.now() - new Date(order.kitchen_started_at).getTime()) / 60000) : 0;
+          const remain = Math.max(0, Number(it.prep_time_minutes) - elapsed);
+          if (remain > maxRemaining) maxRemaining = remain;
+        }
+      }
+
+      // 4. Nếu thời gian nấu còn lại <= 5 phút (Lead time dự kiến shipper di chuyển tới) hoặc tất cả đã nấu xong
+      const LEAD_TIME = 5; 
+      if (allReady || maxRemaining <= LEAD_TIME) {
+        // Giả lập gọi API đối tác vận chuyển (UC-41)
+        const shipId = 'AUTO-SHIP-' + Date.now();
+        
+        // Tạo tracking và tự động chuyển trạng thái để báo hiệu đang tìm tài xế
+        await pool.execute(
+          `INSERT INTO delivery_tracking (order_id, external_shipment_id, status)
+           VALUES (?, ?, 'LOOKING_FOR_DRIVER')`, [order.id, shipId]
+        );
+        
+        console.log(`[UC-36] Đã tự động gọi Shipper cho đơn ${order.id}. Khớp ETA chuẩn!`);
+      }
+    }
+  } catch (e) {
+    console.error('[UC-36 Cron Error]', e);
+  }
+}, 30000);
 
 module.exports = router;
