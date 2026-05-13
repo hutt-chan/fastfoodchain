@@ -277,8 +277,9 @@ router.post('/products/:id/bom', C, async (req, res) => {
   await pool.execute('DELETE FROM product_bom WHERE product_id = ?', [pid]);
   for (const l of lines || []) {
     await pool.execute(
-      'INSERT INTO product_bom (product_id, ingredient_id, qty_per_unit, is_optional) VALUES (?,?,?,?)',
-      [pid, l.ingredient_id, l.qty_per_unit, l.is_optional ? 1 : 0]
+      // Bổ sung thêm extra_price vào query
+      'INSERT INTO product_bom (product_id, ingredient_id, qty_per_unit, is_optional, extra_price) VALUES (?,?,?,?,?)',
+      [pid, l.ingredient_id, l.qty_per_unit, l.is_optional ? 1 : 0, l.extra_price || 0]
     );
   }
   const [branches] = await pool.execute('SELECT id FROM branches');
@@ -295,11 +296,14 @@ router.get('/vouchers', C, async (req, res) => {
 });
 
 router.post('/vouchers', C, async (req, res) => {
-  const { code, discount_type, discount_value, min_order_amount, max_uses, branch_id, valid_from, valid_to } = req.body;
+  // Nhận thêm max_discount_amount từ body
+  const { code, discount_type, discount_value, min_order_amount, max_discount_amount, max_uses, branch_id, valid_from, valid_to } = req.body;
+  
   await pool.execute(
-    `INSERT INTO vouchers (code, discount_type, discount_value, min_order_amount, max_uses, branch_id, valid_from, valid_to)
-     VALUES (?,?,?,?,?,?,?,?)`,
-    [code, discount_type, discount_value, min_order_amount || 0, max_uses || 1000, branch_id || null, valid_from, valid_to]
+    // Bổ sung max_discount_amount vào query
+    `INSERT INTO vouchers (code, discount_type, discount_value, min_order_amount, max_discount_amount, max_uses, branch_id, valid_from, valid_to)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+    [code, discount_type, discount_value, min_order_amount || 0, max_discount_amount || null, max_uses || 1000, branch_id || null, valid_from, valid_to]
   );
   res.json({ ok: true });
 });
@@ -320,31 +324,76 @@ router.get('/reports/summary', C, async (req, res) => {
   const to = req.query.to || '2099-12-31';
   const type = req.query.type || 'day';
   const branchId = req.query.branch_id;
+  const paymentMethod = req.query.payment_method; // Thêm bộ lọc kênh bán
+  const categoryId = req.query.category_id;       // Thêm bộ lọc danh mục
 
-  let branchFilter = '';
-  const params = [from, to];
+  let orderFilter = '';
+  const orderParams = [from, to];
+  
   if (branchId && branchId !== 'all') {
-    branchFilter = ' AND branch_id = ?';
-    params.push(branchId);
+    orderFilter += ' AND branch_id = ?';
+    orderParams.push(branchId);
+  }
+  if (paymentMethod && paymentMethod !== 'all') {
+    orderFilter += ' AND payment_method = ?';
+    orderParams.push(paymentMethod);
   }
 
+  // 1. Tính Doanh thu và Số đơn hoàn tất
   const [[rev]] = await pool.execute(
     `SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS order_count FROM orders
-     WHERE status NOT IN ('CANCELLED','PENDING_PAYMENT') AND DATE(created_at) BETWEEN ? AND ?${branchFilter}`,
-    params
+     WHERE status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ? ${orderFilter}`,
+    orderParams
   );
+
+  // 2. Tính Tổng số đơn (để tính tỷ lệ hủy)
+  const [[totalOrders]] = await pool.execute(
+    `SELECT COUNT(*) AS total_count FROM orders WHERE DATE(created_at) BETWEEN ? AND ? ${orderFilter}`,
+    orderParams
+  );
+
+  // 3. Đếm số đơn hủy
+  const [[cancel]] = await pool.execute(
+    `SELECT COUNT(*) AS c FROM orders WHERE status = 'CANCELLED' AND DATE(created_at) BETWEEN ? AND ? ${orderFilter}`,
+    orderParams
+  );
+
+  // 4. KPI Bếp (Thời gian nấu trung bình - phút)
+  const [[kitchen]] = await pool.execute(
+    `SELECT AVG(TIMESTAMPDIFF(MINUTE, kitchen_started_at, kitchen_finished_at)) as avg_prep 
+     FROM orders 
+     WHERE status = 'COMPLETED' AND kitchen_started_at IS NOT NULL AND kitchen_finished_at IS NOT NULL 
+     AND DATE(created_at) BETWEEN ? AND ? ${orderFilter}`, 
+    orderParams
+  );
+
+  // 5. KPI Giao hàng (Thời gian giao trung bình - phút)
+  const [[delivery]] = await pool.execute(
+    `SELECT AVG(TIMESTAMPDIFF(MINUTE, packaged_at, completed_at)) as avg_delivery 
+     FROM orders 
+     WHERE status = 'COMPLETED' AND packaged_at IS NOT NULL AND completed_at IS NOT NULL 
+     AND DATE(created_at) BETWEEN ? AND ? ${orderFilter}`, 
+    orderParams
+  );
+
+  // 6. Top sản phẩm bán chạy (Có join thêm bảng products để lọc theo danh mục)
+  let itemFilter = '';
+  let itemParams = [...orderParams];
+  if (categoryId && categoryId !== 'all') {
+    itemFilter = ' AND p.category_id = ?';
+    itemParams.push(categoryId);
+  }
 
   const [top] = await pool.execute(
-    `SELECT oi.product_name, SUM(oi.quantity) AS qty FROM order_items oi
+    `SELECT oi.product_name, SUM(oi.quantity) AS qty 
+     FROM order_items oi
      JOIN orders o ON o.id = oi.order_id
-     WHERE o.status = 'COMPLETED' AND DATE(o.created_at) BETWEEN ? AND ?${branchFilter}
+     JOIN products p ON p.id = oi.product_id
+     WHERE o.status = 'COMPLETED' AND DATE(o.created_at) BETWEEN ? AND ? 
+     ${orderFilter.replace(/branch_id/g, 'o.branch_id').replace(/payment_method/g, 'o.payment_method')}
+     ${itemFilter}
      GROUP BY oi.product_name ORDER BY qty DESC LIMIT 10`,
-    params
-  );
-
-  const [[cancel]] = await pool.execute(
-    `SELECT COUNT(*) AS c FROM orders WHERE status = 'CANCELLED' AND DATE(created_at) BETWEEN ? AND ?${branchFilter}`,
-    params
+    itemParams
   );
 
   let dateFormatSQL = '';
@@ -352,14 +401,23 @@ router.get('/reports/summary', C, async (req, res) => {
   else if (type === 'month') dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m")';
   else if (type === 'year') dateFormatSQL = 'DATE_FORMAT(created_at, "%Y")';
 
+  // 7. Chi tiết doanh thu theo thời gian
   const [details] = await pool.execute(
     `SELECT ${dateFormatSQL} AS label, COALESCE(SUM(total),0) AS revenue, COUNT(*) AS orders 
-     FROM orders WHERE status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?${branchFilter}
+     FROM orders WHERE status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ? ${orderFilter}
      GROUP BY label ORDER BY label DESC`,
-    params
+    orderParams
   );
 
-  res.json({ revenue: rev, top_products: top, cancelled: cancel.c, details: details });
+  res.json({ 
+    revenue: rev, 
+    total_orders: totalOrders.total_count,
+    cancelled: cancel.c, 
+    avg_prep: kitchen.avg_prep || 0,
+    avg_delivery: delivery.avg_delivery || 0,
+    top_products: top, 
+    details: details 
+  });
 });
 
 router.get('/inventory-adjustments', C, async (req, res) => {

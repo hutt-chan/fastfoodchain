@@ -23,6 +23,7 @@
     <button data-tab="vou">Voucher</button>
     <button data-tab="rep">Báo cáo</button>
     <button data-tab="rec">Đối soát</button>
+    <button data-tab="adj">Duyệt kho</button>
   </div>
   <section id="tab-prod" class="tab-panel active">
     <div class="card">
@@ -99,6 +100,7 @@
         <div><label for="nv_type">Loại</label><select id="nv_type"><option value="PERCENT">Phần trăm</option><option value="FIXED">Số tiền</option></select></div>
         <div><label for="nv_val">Giá trị</label><input id="nv_val" type="number" /></div>
         <div><label for="nv_min">Đơn tối thiểu</label><input id="nv_min" type="number" value="0" /></div>
+        <div><label for="nv_max_discount">Giảm tối đa (với %)</label><input id="nv_max_discount" type="number" placeholder="Trống = Không giới hạn" /></div>
         <div><label for="nv_max">Số lần dùng tối đa</label><input id="nv_max" type="number" value="100" /></div>
         <div><label for="nv_branch">Chi nhánh</label><select id="nv_branch"><option value="">— Toàn chuỗi —</option></select></div>
         <div><label for="nv_from">Hiệu lực từ</label><input id="nv_from" type="date" /></div>
@@ -109,12 +111,24 @@
   </section>
   <section id="tab-rep" class="tab-panel">
     <div class="card">
-      <h2>📊 Báo cáo tổng & Chi nhánh (UC-17)</h2>
+      <h2>📊 Báo cáo phân tích tổng hợp (UC-19)</h2>
       
-      <div class="grid grid-2" style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
+      <div class="grid grid-4" style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
         <div>
           <label for="repBranch">Chi nhánh</label>
           <select id="repBranch"><option value="all">— Toàn chuỗi —</option></select>
+        </div>
+        <div>
+          <label for="repChannel">Kênh bán</label>
+          <select id="repChannel">
+            <option value="all">— Tất cả —</option>
+            <option value="ONLINE">Online (Cổng TT)</option>
+            <option value="COD">Tiền mặt (COD)</option>
+          </select>
+        </div>
+        <div>
+          <label for="repCat">Danh mục món</label>
+          <select id="repCat"><option value="all">— Tất cả —</option></select>
         </div>
         <div>
           <label for="repType">Chế độ xem</label>
@@ -158,7 +172,10 @@
         <div><label>Đến năm</label><input id="r_toYear" type="number" min="2020" max="2050" /></div>
       </div>
 
-      <div class="row-actions" style="margin-top: 1rem;"><button id="loadRep">Tải báo cáo</button></div>
+      <div class="row-actions" style="margin-top: 1rem;">
+        <button id="loadRep">Tải báo cáo</button>
+        <button id="exportRep" class="secondary" style="display:none;">📥 Xuất Excel (CSV)</button>
+      </div>
       
       <div id="repBox" class="kpi-grid" style="margin-top:1.5rem"></div>
       
@@ -190,14 +207,21 @@
         </div>
       </div>
       
-      <label for="recInput">Dữ liệu đối soát</label>
-      <textarea id="recInput" rows="8" placeholder='Ví dụ JSON: [{"order_code":"ORD-123", "partner_amount": 150000}]'></textarea>
+      <label for="recFile">Tải lên file đối soát (.csv, .json)</label>
+      <input type="file" id="recFile" accept=".csv,.json" style="margin-bottom: 1rem; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; width: 100%;" />
       
       <div class="row-actions">
         <button id="btnRecon">🚀 Bắt đầu đối soát</button>
       </div>
       
       <div id="reconResult" style="margin-top:2rem"></div>
+    </div>
+  </section>
+  <section id="tab-adj" class="tab-panel">
+    <div class="card">
+      <h2>📦 Phê duyệt kiểm kê chi nhánh (UC-30)</h2>
+      <p class="tag">Các phiếu kiểm kê có độ lệch vượt ngưỡng an toàn (>5%) sẽ được đẩy lên đây chờ duyệt.</p>
+      <div id="adjList" style="margin-top: 1rem;"></div>
     </div>
   </section>
 </div>
@@ -244,6 +268,9 @@ async function loadCats() {
     </tr>`).join('') + '</tbody></table></div>';
   document.getElementById('np_cat').innerHTML = cats.map(c => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join('');
   document.getElementById('prodCat').innerHTML = '<option value="">Tất cả danh mục</option>' + cats.map(c => '<option value="' + escapeHtml(c.name) + '">' + escapeHtml(c.name) + '</option>').join('');
+
+  const repCat = document.getElementById('repCat');
+  if (repCat) repCat.innerHTML = '<option value="all">— Tất cả danh mục —</option>' + cats.map(c => '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>').join('');
 }
 
 function renderProducts() {
@@ -360,12 +387,14 @@ async function loadVouchers() {
   };
 
   document.getElementById('vouchers').innerHTML = r.vouchers.length
-    ? '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Trạng thái</th><th>Loại</th><th>Giá trị</th><th>Tối thiểu</th><th>Đã dùng</th><th>Hiệu lực</th><th>Thao tác</th></tr></thead><tbody>' +
+    // Thêm thẻ <th>Giảm TĐ</th>
+    ? '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Trạng thái</th><th>Loại</th><th>Giá trị</th><th>Giảm TĐ</th><th>Tối thiểu</th><th>Đã dùng</th><th>Hiệu lực</th><th>Thao tác</th></tr></thead><tbody>' +
       r.vouchers.map(v => `<tr>
         <td><strong>${escapeHtml(v.code)}</strong></td>
         <td>${v.is_active ? '<span class="badge ok">Đang chạy</span>' : '<span class="badge warn">Đã dừng</span>'}</td>
         <td>${v.discount_type}</td>
         <td>${v.discount_type === 'PERCENT' ? v.discount_value + '%' : vnd(v.discount_value)}</td>
+        <td>${v.max_discount_amount ? vnd(v.max_discount_amount) : '-'}</td>
         <td>${vnd(v.min_order_amount)}</td>
         <td>${v.used_count}/${v.max_uses}</td>
         <td>${fmt(v.valid_from)} → ${fmt(v.valid_to)}</td>
@@ -458,30 +487,39 @@ document.getElementById('addVou').onclick = async () => {
   const code = document.getElementById('nv_code').value.trim();
   const val = Number(document.getElementById('nv_val').value);
   const minOrder = Number(document.getElementById('nv_min').value);
+  // Lấy giá trị Giảm tối đa
+  const maxDiscVal = document.getElementById('nv_max_discount').value;
+  const maxDiscount = maxDiscVal ? Number(maxDiscVal) : null; 
   const maxUses = Number(document.getElementById('nv_max').value);
+  
   if (!code) return showMsg('<div class="msg err">Vui lòng nhập mã</div>');
   if (val <= 0) return showMsg('<div class="msg err">Giá trị voucher phải lớn hơn 0</div>');
   if (minOrder < 0) return showMsg('<div class="msg err">Đơn tối thiểu không được âm</div>');
   if (maxUses <= 0) return showMsg('<div class="msg err">Số lần dùng tối đa phải lớn hơn 0</div>');
+  
   try {
     await api('/chain/vouchers', { method:'POST', body:{
       code, discount_type: document.getElementById('nv_type').value,
-      discount_value: val, min_order_amount: minOrder, max_uses: maxUses,
+      discount_value: val, min_order_amount: minOrder, 
+      max_discount_amount: maxDiscount, // Đẩy dữ liệu này đi
+      max_uses: maxUses,
       branch_id: document.getElementById('nv_branch').value || null,
       valid_from: document.getElementById('nv_from').value, valid_to: document.getElementById('nv_to').value,
     }});
     showMsg('<div class="msg ok">✓ Đã tạo voucher</div>');
-    ['nv_code'].forEach(id => document.getElementById(id).value = '');
+    ['nv_code', 'nv_max_discount'].forEach(id => document.getElementById(id).value = '');
     loadVouchers();
   } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
-}; 
+};
 
+// --- 3. BOM ACTIONS ---
 // --- 3. BOM ACTIONS ---
 function bomLineHtml(line) {
   const opts = ings.map(i => '<option value="' + i.id + '"' + (line && line.ingredient_id === i.id ? ' selected' : '') + '>' + escapeHtml(i.name) + ' (' + i.unit + ')</option>').join('');
   return '<div class="row-actions" data-bl style="align-items:flex-end">' +
     '<div style="flex:1"><label>Nguyên liệu</label><select data-ing>' + opts + '</select></div>' +
     '<div style="width:140px"><label>SL/đơn vị</label><input type="number" step="0.0001" data-qty value="' + (line ? Number(line.qty_per_unit) : 1) + '" min="0" /></div>' +
+    '<div style="width:120px"><label>Giá Topping</label><input type="number" data-eprice value="' + (line && line.extra_price ? Number(line.extra_price) : 0) + '" min="0" /></div>' + // Thêm cột nhập giá topping
     '<div><label>&nbsp;</label><label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem"><input type="checkbox" data-opt' + (line && line.is_optional ? ' checked' : '') + ' style="width:auto" /> Tùy chọn</label></div>' +
     '<button class="secondary" type="button" onclick="this.parentElement.remove()" aria-label="Xóa">✕</button></div>';
 }
@@ -496,21 +534,30 @@ document.getElementById('addBomLine').onclick = () => {
   if (el.querySelector('p.tag')) el.innerHTML = '';
   el.insertAdjacentHTML('beforeend', bomLineHtml(null));
 };
+
 document.getElementById('saveBom').onclick = async () => {
   const pid = document.getElementById('bom_pid').value; if (!pid) return alertModal('Chọn sản phẩm');
   const lines = [];
   let invalidQty = false;
   document.querySelectorAll('#bom [data-bl]').forEach(d => {
     const qty = Number(d.querySelector('[data-qty]').value);
+    const eprice = Number(d.querySelector('[data-eprice]').value); // Lấy giá trị extra_price
+    
     if (qty <= 0) { invalidQty = true; return; }
-    lines.push({ ingredient_id: Number(d.querySelector('[data-ing]').value), qty_per_unit: qty, is_optional: d.querySelector('[data-opt]').checked });
+    lines.push({ 
+      ingredient_id: Number(d.querySelector('[data-ing]').value), 
+      qty_per_unit: qty, 
+      extra_price: eprice, // Đẩy vào payload
+      is_optional: d.querySelector('[data-opt]').checked 
+    });
   });
   if (invalidQty) return alertModal('Số lượng nguyên liệu phải lớn hơn 0');
+  
   await withLoading('Đang lưu BOM...', async () => {
     await api('/chain/products/' + pid + '/bom', { method:'POST', body:{ lines } });
     showMsg('<div class="msg ok">✓ Đã lưu BOM. Hệ thống đã làm mới khả dụng món tại các chi nhánh.</div>');
   });
-}; 
+};
 
 // --- 4. EDIT/DELETE CATEGORY ---
 window.editCat = async function(id) {
@@ -552,37 +599,44 @@ window.editIng = function(id) {
       <div><label>ĐV Cơ bản</label><input id="ei_unit" value="${escapeHtml(ing.unit)}" /></div>
       <div><label>ĐV Nhập</label><input id="ei_punit" value="${escapeHtml(ing.purchase_unit || '')}" /></div>
       <div><label>Tỷ lệ quy đổi</label><input id="ei_rate" type="number" step="0.0001" value="${Number(ing.conversion_rate || 1)}" /></div>
-      <div><label>Giá nhập (ĐV Nhập)</label><input id="ei_cost" type="number" value="${purchaseCost}" /></div>
-      <div><label>Tồn an toàn (ĐV CB)</label><input id="ei_min" type="number" value="${ing.safety_stock_min}" /></div>
-      <div><label>Điểm đặt (ĐV CB)</label><input id="ei_reord" type="number" value="${ing.reorder_point}" /></div>
+      
+      <div><label>Giá nhập (ĐV Nhập)</label><input id="ei_cost" type="text" value="${fmtNum(purchaseCost)}" oninput="let v = this.value.replace(/[^0-9]/g, ''); this.value = v ? Number(v).toLocaleString('vi-VN') : '';" /></div>
+      
+      <div><label>Tồn an toàn (ĐV CB)</label><input id="ei_min" type="number" step="0.001" value="${Number(ing.safety_stock_min)}" /></div>
+      <div><label>Điểm đặt (ĐV CB)</label><input id="ei_reord" type="number" step="0.001" value="${Number(ing.reorder_point)}" /></div>
     </div>
     <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
       <button class="secondary" onclick="closeModal()">Hủy</button>
       <button onclick="saveIng(${id})">Lưu thay đổi</button>
     </div>`);
 };
+
 window.saveIng = async function(id) {
   const name = document.getElementById('ei_name').value.trim();
   const rate = Number(document.getElementById('ei_rate').value);
-  const cost = Number(document.getElementById('ei_cost').value);
+  
+  // Xóa mọi dấu chấm trước khi chuyển thành Number
+  const rawCostStr = document.getElementById('ei_cost').value.replace(/\./g, '');
+  const cost = Number(rawCostStr);
 
-  // Thêm 3 dòng chặn lỗi này:
   if (!name) return alertModal('Tên nguyên liệu không được để trống');
   if (rate <= 0) return alertModal('Tỷ lệ quy đổi phải lớn hơn 0');
   if (cost < 0) return alertModal('Giá nhập không được âm');
+  
   try {
     await api('/chain/ingredients/' + id, { method:'PATCH', body:{
       name: document.getElementById('ei_name').value.trim(),
       unit: document.getElementById('ei_unit').value.trim(),
       purchase_unit: document.getElementById('ei_punit').value.trim(),
       conversion_rate: Number(document.getElementById('ei_rate').value),
-      purchase_price_input: Number(document.getElementById('ei_cost').value),
+      purchase_price_input: cost, // Sử dụng biến cost đã được parse sạch sẽ ở trên
       safety_stock_min: Number(document.getElementById('ei_min').value),
       reorder_point: Number(document.getElementById('ei_reord').value)
     }});
     closeModal(); loadIngs(); showMsg('<div class="msg ok">✓ Đã cập nhật nguyên liệu</div>');
   } catch (e) { alertModal(e.message); }
 };
+
 window.deleteIng = async function(id) {
   if (!await confirmModal('Xác nhận xóa nguyên liệu? (Chỉ xóa được nếu không nằm trong BOM của sản phẩm nào)')) return;
   try {
@@ -604,9 +658,13 @@ window.toggleRepInputs = function() {
   document.getElementById('filter-year').style.display = type === 'year' ? '' : 'none';
 };
 
+let currentReportData = []; // Biến lưu data để xuất CSV
+
 document.getElementById('loadRep').onclick = async () => {
   const type = document.getElementById('repType').value;
   const branchId = document.getElementById('repBranch').value;
+  const channel = document.getElementById('repChannel').value;
+  const catId = document.getElementById('repCat').value;
   let from = '', to = '';
 
   if (type === 'day') {
@@ -632,19 +690,29 @@ document.getElementById('loadRep').onclick = async () => {
 
   const q = [`type=${type}`];
   if (branchId !== 'all') q.push('branch_id=' + branchId);
+  if (channel !== 'all') q.push('payment_method=' + channel);
+  if (catId !== 'all') q.push('category_id=' + catId);
   if (from) q.push('from=' + from); 
   if (to) q.push('to=' + to);
 
   try {
     const r = await api('/chain/reports/summary?' + q.join('&'));
     
+    // Tính tỷ lệ hủy
+    const cancelRate = r.total_orders > 0 ? ((r.cancelled / r.total_orders) * 100).toFixed(1) : 0;
+
     document.getElementById('repBox').innerHTML =
       '<div class="kpi"><div class="l">Doanh thu</div><div class="v">' + vnd(r.revenue.revenue) + '</div></div>' +
       '<div class="kpi"><div class="l">Số đơn hoàn tất</div><div class="v">' + fmtNum(r.revenue.order_count) + '</div></div>' +
-      '<div class="kpi"><div class="l">Đơn hủy</div><div class="v">' + fmtNum(r.cancelled) + '</div></div>';
+      '<div class="kpi"><div class="l">Đơn hủy (Tỷ lệ)</div><div class="v" style="color:var(--danger)">' + fmtNum(r.cancelled) + ' (' + cancelRate + '%)</div></div>' +
+      '<div class="kpi"><div class="l">Hiệu suất bếp</div><div class="v">' + Math.round(r.avg_prep) + ' phút/đơn</div></div>' +
+      '<div class="kpi"><div class="l">Hiệu suất Shipper</div><div class="v">' + Math.round(r.avg_delivery) + ' phút/đơn</div></div>';
 
     let detailHtml = '<h3>Chi tiết doanh thu</h3>';
+    currentReportData = r.details; // Lưu lại để export
+
     if (r.details && r.details.length > 0) {
+      document.getElementById('exportRep').style.display = 'inline-block';
       detailHtml += '<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Số lượng đơn</th><th>Doanh thu</th></tr></thead><tbody>';
       detailHtml += r.details.map(d => {
         let label = d.label;
@@ -658,6 +726,7 @@ document.getElementById('loadRep').onclick = async () => {
       }).join('');
       detailHtml += '</tbody></table></div>';
     } else {
+      document.getElementById('exportRep').style.display = 'none';
       detailHtml += '<p class="empty">Không có dữ liệu trong thời gian này</p>';
     }
     document.getElementById('repDetails').innerHTML = detailHtml;
@@ -670,59 +739,161 @@ document.getElementById('loadRep').onclick = async () => {
   } catch (e) { alertModal('Lỗi tải báo cáo: ' + e.message); }
 };
 
+// Tính năng xuất CSV
+document.getElementById('exportRep').onclick = () => {
+  if (!currentReportData.length) return;
+  let csv = 'Thoi gian,So don,Doanh thu\n';
+  currentReportData.forEach(d => {
+    csv += `${d.label},${d.orders},${d.revenue}\n`;
+  });
+  const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', 'bao_cao_doanh_thu.csv');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 // --- UC-18: LOGIC ĐỐI SOÁT ---
 document.getElementById('btnRecon').onclick = async () => {
-  const raw = document.getElementById('recInput').value.trim();
+  const fileInput = document.getElementById('recFile');
   const format = document.getElementById('recFormat').value;
   const type = document.getElementById('recType').value;
   
-  if(!raw) return alertModal('Vui lòng nhập dữ liệu đối soát');
+  if (!fileInput.files || fileInput.files.length === 0) {
+    return alertModal('Vui lòng chọn file dữ liệu đối soát (.csv hoặc .json)');
+  }
+
+  const file = fileInput.files[0];
+  const reader = new FileReader();
+
+  // Khi trình duyệt đọc file xong thì chạy khối lệnh này
+  reader.onload = async (e) => {
+    const raw = e.target.result;
+    let data = [];
+    
+    try {
+      if (format === 'json') {
+        data = JSON.parse(raw);
+      } else {
+        // Xử lý đọc file CSV
+        data = raw.split(/\r?\n/) // Hỗ trợ cả Windows và Mac
+          .filter(line => line.trim() !== '') // Bỏ qua các dòng trống
+          .map(line => {
+            const [code, amt] = line.split(',');
+            return { order_code: code?.trim(), partner_amount: Number(amt?.trim()) };
+          });
+      }
+    } catch(err) { 
+      return alertModal('Dữ liệu trong file không đúng định dạng. Vui lòng kiểm tra lại.'); 
+    }
+
+    try {
+      // Bắn mảng dữ liệu vừa đọc được xuống API cũ
+      const res = await api('/chain/reconcile', { method: 'POST', body: { partner_data: data, payment_method: type } });
+      
+      let html = `<div class="kpi-grid">
+        <div class="kpi"><div class="l">Khớp thành công</div><div class="v" style="color:green">${res.matched.length}</div></div>
+        <div class="kpi"><div class="l">Lệch/Sai lệch</div><div class="v" style="color:red">${res.mismatched.length}</div></div>
+        <div class="kpi"><div class="l">Không tìm thấy mã</div><div class="v">${res.not_found.length}</div></div>
+      </div>`;
+
+      if(res.mismatched.length > 0) {
+        html += `<h3 style="margin-top: 1.5rem">⚠️ Danh sách đơn lệch/sai phương thức</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Mã đơn</th><th>HT ghi nhận</th><th>Đối tác báo cáo</th><th>Lý do</th></tr></thead>
+            <tbody>` +
+          res.mismatched.map(m => `<tr><td><strong>${escapeHtml(m.code)}</strong></td><td>${vnd(m.local_total)}</td><td>${vnd(m.partner_amount)}</td><td><span class="badge err">${escapeHtml(m.reason)}</span></td></tr>`).join('') + 
+          `</tbody></table></div>`;
+      }
+      
+      if(res.not_found.length > 0) {
+        html += `<h3 style="margin-top: 1.5rem">❓ Mã đơn không tồn tại trên hệ thống</h3><ul>` + 
+          res.not_found.map(n => `<li><strong>${escapeHtml(n.code)}</strong> (Số tiền đối tác: ${vnd(n.partner_amount)})</li>`).join('') + 
+          `</ul>`;
+      }
+      
+      document.getElementById('reconResult').innerHTML = html;
+      showMsg('<div class="msg ok">✓ Đối soát hoàn tất</div>');
+      fileInput.value = ''; // Reset ô chọn file sau khi làm xong
+      
+    } catch (apiError) {
+      alertModal('Lỗi khi đối soát: ' + apiError.message);
+    }
+  };
+
+  reader.onerror = () => alertModal('Đã xảy ra lỗi trong quá trình đọc file.');
   
-  let data = [];
-  try {
-    if(format === 'json') {
-      data = JSON.parse(raw);
-    } else {
-      data = raw.split(/\r?\n/) // Hỗ trợ cả Windows và Mac
-        .filter(line => line.trim() !== '') // Bỏ qua các dòng trống
-        .map(line => {
-          const [code, amt] = line.split(',');
-          return { order_code: code?.trim(), partner_amount: Number(amt?.trim()) };
-        });
-    }
-  } catch(e) { 
-    return alertModal('Dữ liệu không đúng định dạng. Vui lòng kiểm tra lại.'); 
-  }
+  // Lệnh kích hoạt đọc file
+  reader.readAsText(file);
+};
 
+// --- 8. PHÊ DUYỆT ĐIỀU CHỈNH KHO (UC-30) ---
+async function loadAdjustments() {
   try {
-    const res = await api('/chain/reconcile', { method: 'POST', body: { partner_data: data, payment_method: type } });
-    
-    let html = `<div class="kpi-grid">
-      <div class="kpi"><div class="l">Khớp thành công</div><div class="v" style="color:green">${res.matched.length}</div></div>
-      <div class="kpi"><div class="l">Lệch/Sai lệch</div><div class="v" style="color:red">${res.mismatched.length}</div></div>
-      <div class="kpi"><div class="l">Không tìm thấy mã</div><div class="v">${res.not_found.length}</div></div>
-    </div>`;
-
-    if(res.mismatched.length > 0) {
-      html += `<h3 style="margin-top: 1.5rem">⚠️ Danh sách đơn lệch/sai phương thức</h3>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Mã đơn</th><th>HT ghi nhận</th><th>Đối tác báo cáo</th><th>Lý do</th></tr></thead>
-          <tbody>` +
-        res.mismatched.map(m => `<tr><td><strong>${escapeHtml(m.code)}</strong></td><td>${vnd(m.local_total)}</td><td>${vnd(m.partner_amount)}</td><td><span class="badge err">${escapeHtml(m.reason)}</span></td></tr>`).join('') + 
-        `</tbody></table></div>`;
-    }
-    
-    if(res.not_found.length > 0) {
-      html += `<h3 style="margin-top: 1.5rem">❓ Mã đơn không tồn tại trên hệ thống</h3><ul>` + 
-        res.not_found.map(n => `<li><strong>${escapeHtml(n.code)}</strong> (Số tiền đối tác: ${vnd(n.partner_amount)})</li>`).join('') + 
-        `</ul>`;
-    }
-    
-    document.getElementById('reconResult').innerHTML = html;
-    showMsg('<div class="msg ok">✓ Đối soát hoàn tất</div>');
+    const { adjustments } = await api('/chain/inventory-adjustments?status=PENDING');
+    document.getElementById('adjList').innerHTML = adjustments.length
+      ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Chi nhánh</th><th>Lý do</th><th>Người tạo</th><th>Ngày tạo</th><th>Thao tác</th></tr></thead><tbody>' +
+        adjustments.map(a => `<tr>
+          <td>${a.id}</td>
+          <td><strong>${escapeHtml(a.branch_name)}</strong></td>
+          <td>${escapeHtml(a.reason || '-')}</td>
+          <td>${escapeHtml(a.creator_name || '-')}</td>
+          <td>${new Date(a.created_at).toLocaleString('vi-VN')}</td>
+          <td><button class="secondary" onclick="reviewAdj(${a.id})" style="padding:0.25rem 0.55rem">Chi tiết & Duyệt</button></td>
+        </tr>`).join('') + '</tbody></table></div>'
+      : '<p class="empty"><span class="icon">✅</span>Không có phiếu điều chỉnh nào đang chờ duyệt</p>';
   } catch (e) {
-    alertModal('Lỗi khi đối soát: ' + e.message);
+    document.getElementById('adjList').innerHTML = '<div class="msg err">' + escapeHtml(e.message) + '</div>';
   }
+}
+
+window.reviewAdj = async function(id) {
+  try {
+    const { adjustment, lines } = await api('/chain/inventory-adjustments/' + id);
+    const linesHtml = lines.map(l => `<tr>
+      <td>${escapeHtml(l.ingredient_name)}</td>
+      <td>${l.qty_before} ${l.unit}</td>
+      <td>${l.qty_after} ${l.unit}</td>
+      <td style="color:${l.delta < 0 ? 'var(--danger)' : 'var(--success)'}; font-weight:bold;">
+        ${l.delta > 0 ? '+' : ''}${l.delta} ${l.unit}
+      </td>
+    </tr>`).join('');
+
+    showModal(`<h3>Chi tiết phiếu kiểm kê #${id} - ${escapeHtml(adjustment.branch_name)}</h3>
+      <p><strong>Lý do chi nhánh nhập:</strong> ${escapeHtml(adjustment.reason || '-')}</p>
+      <div class="table-wrap" style="margin-top: 1rem;"><table>
+        <thead><tr><th>Nguyên liệu</th><th>Tồn hệ thống</th><th>Thực đếm</th><th>Chênh lệch</th></tr></thead>
+        <tbody>${linesHtml}</tbody>
+      </table></div>
+      <label for="rev_reason" style="margin-top:1rem">Ghi chú (bắt buộc nếu từ chối)</label>
+      <textarea id="rev_reason" rows="2" placeholder="Nhập lý do từ chối..."></textarea>
+      <div class="row-actions" style="margin-top:1.5rem;justify-content:flex-end">
+        <button class="secondary" onclick="closeModal()">Đóng</button>
+        <button class="danger" onclick="submitReviewAdj(${id}, false)">Từ chối</button>
+        <button onclick="submitReviewAdj(${id}, true)">Phê duyệt</button>
+      </div>`);
+  } catch (e) { alertModal(e.message); }
+};
+
+window.submitReviewAdj = async function(id, isApprove) {
+  const reason = document.getElementById('rev_reason').value.trim();
+  if (!isApprove && !reason) return alertModal('Vui lòng nhập ghi chú lý do từ chối!');
+  if (!await confirmModal(isApprove ? 'Xác nhận PHÊ DUYỆT? Tồn kho chi nhánh sẽ bị thay đổi ngay lập tức.' : 'Xác nhận TỪ CHỐI phiếu này?')) return;
+
+  try {
+    await withLoading('Đang xử lý...', async () => {
+      await api('/chain/inventory-adjustments/' + id + '/review', {
+        method: 'POST',
+        body: { approve: isApprove, reason: reason }
+      });
+      closeModal();
+      showMsg('<div class="msg ok">✓ Đã ' + (isApprove ? 'phê duyệt' : 'từ chối') + ' phiếu điều chỉnh</div>');
+      loadAdjustments();
+    });
+  } catch (e) { alertModal(e.message); }
 };
 
 // --- 7. INIT ---
@@ -732,6 +903,7 @@ async function init() {
   await loadProducts(); 
   await loadVouchers(); 
   await loadBranchesForVoucher();
+  await loadAdjustments();
   document.getElementById('bom_pid').dispatchEvent(new Event('change'));
 }
 init();

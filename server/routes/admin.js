@@ -30,48 +30,6 @@ router.patch('/config', A, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Lấy danh sách toàn bộ Roles, Permissions và các gán quyền hiện tại
-router.get('/permissions/matrix', A, asyncHandler(async (req, res) => {
-  const [roles] = await pool.execute('SELECT id, code, name_vi FROM roles ORDER BY id');
-  const [perms] = await pool.execute('SELECT id, code, name_vi, module FROM permissions ORDER BY module, id');
-  const [mapping] = await pool.execute('SELECT role_id, permission_id FROM role_permissions');
-
-  res.json({ roles, permissions: perms, mapping });
-}));
-
-// Cập nhật ma trận quyền cho một Vai trò
-router.post('/permissions/matrix', A, asyncHandler(async (req, res) => {
-  const { role_id, permission_ids, admin_password } = req.body;
-
-  // KIỂM TRA MẬT KHẨU ADMIN
-  if (!admin_password) return res.status(400).json({ error: 'Yêu cầu mật khẩu Admin' });
-  const [[adminData]] = await pool.execute('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
-  const match = await bcrypt.compare(admin_password, adminData.password_hash);
-  if (!match) return res.status(401).json({ error: 'Mật khẩu Admin không chính xác!' });
-  
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    
-    // 1. Xóa toàn bộ quyền cũ của Role này
-    await conn.execute('DELETE FROM role_permissions WHERE role_id = ?', [role_id]);
-    
-    // 2. Thêm mới các quyền được chọn
-    if (permission_ids && permission_ids.length > 0) {
-      const values = permission_ids.map(pId => [role_id, pId]);
-      await conn.query('INSERT INTO role_permissions (role_id, permission_id) VALUES ?', [values]);
-    }
-    
-    await conn.commit();
-    await logAudit(req.user.id, 'PERMISSION_UPDATE', 'admin', { role_id, permission_ids }, req.ip);
-    res.json({ ok: true });
-  } catch (e) {
-    await conn.rollback();
-    throw e;
-  } finally {
-    conn.release();
-  }
-}));
 
 router.get('/branches', A, async (req, res) => {
   const [rows] = await pool.execute('SELECT * FROM branches ORDER BY id');

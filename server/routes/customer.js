@@ -192,6 +192,10 @@ router.post('/vouchers/validate', auth(['CUSTOMER']), async (req, res) => {
   let discount = 0;
   if (v.discount_type === 'PERCENT') {
     discount = (Number(subtotal) * Number(v.discount_value)) / 100;
+    // BỔ SUNG: Chặn số tiền giảm tối đa
+    if (v.max_discount_amount && discount > Number(v.max_discount_amount)) {
+      discount = Number(v.max_discount_amount);
+    }
   } else {
     discount = Number(v.discount_value);
   }
@@ -265,8 +269,15 @@ router.post('/orders', auth(['CUSTOMER']), async (req, res) => {
         return res.status(400).json({ error: 'Voucher khong ap dung cho chi nhanh nay' });
       }
       if (subtotal >= Number(v.min_order_amount)) {
-        if (v.discount_type === 'PERCENT') discount = (subtotal * Number(v.discount_value)) / 100;
-        else discount = Number(v.discount_value);
+        if (v.discount_type === 'PERCENT') {
+          discount = (subtotal * Number(v.discount_value)) / 100;
+          // BỔ SUNG: Chặn số tiền giảm tối đa
+          if (v.max_discount_amount && discount > Number(v.max_discount_amount)) {
+            discount = Number(v.max_discount_amount);
+          }
+        } else {
+          discount = Number(v.discount_value);
+        }
       } else {
         await conn.rollback();
         return res.status(400).json({ error: 'Don chua dat toi thieu de ap dung voucher' });

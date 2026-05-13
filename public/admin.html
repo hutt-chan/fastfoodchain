@@ -20,7 +20,6 @@
     <button class="active" data-tab="cfg">⚙️ Cấu hình</button>
     <button data-tab="branches">🏬 Chi nhánh</button>
     <button data-tab="users">👥 Người dùng</button>
-    <button data-tab="perms">🛡️ Phân quyền</button>
     <button data-tab="audit">📜 Audit log</button>
   </div>
   <section id="tab-cfg" class="tab-panel active">
@@ -114,17 +113,6 @@
       <div id="users"></div>
     </div>
     
-  </section>
-  <section id="tab-perms" class="tab-panel">
-    <div class="card">
-      <h2>🛡️ Ma trận phân quyền (UC-12)</h2>
-      <p class="tag">Tích chọn để gán quyền cho từng vai trò hệ thống.</p>
-      <div id="perms-matrix-container" class="table-wrap">
-        </div>
-      <div class="row-actions">
-        <button id="savePermsBtn" class="primary">💾 Lưu thiết lập ma trận</button>
-      </div>
-    </div>
   </section>
   <section id="tab-audit" class="tab-panel">
     <div class="card">
@@ -386,28 +374,48 @@ function renderAudit() {
           <td><span class="badge" style="${badgeStyle}">${l.action}</span></td>
           <td>${l.module || ''}</td>
           <td><code>${preview}</code></td>
-          <td><button class="secondary" onclick='showAuditDetail(${JSON.stringify(l)})'>Xem</button></td>
+          <td><button class="secondary" onclick="showAuditDetail(${l.id})">Xem</button></td>
         </tr>`;
       }).join('') +
       '</tbody></table></div>'
     : '<p class="empty">Không có log phù hợp</p>';
 }
 
-// Hàm hiển thị chi tiết Log (Thêm vào script)
-async function showAuditDetail(log) {
-  const formattedDetail = JSON.stringify(JSON.parse(log.detail || '{}'), null, 2);
-  await alertModal(`
+window.showAuditDetail = function(id) {
+  // 1. Tìm log từ mảng allLogs
+  const log = allLogs.find(x => x.id === id);
+  if (!log) return;
+
+  // 2. Xử lý an toàn cho chuỗi detail
+  let formattedDetail = '';
+  if (log.detail) {
+    try {
+      formattedDetail = JSON.stringify(JSON.parse(log.detail), null, 2);
+    } catch (e) {
+      formattedDetail = log.detail; 
+    }
+  } else {
+    formattedDetail = 'Không có dữ liệu chi tiết';
+  }
+
+  // 3. Sử dụng showModal thay vì alertModal để render HTML
+  showModal(`
+    <h3>📜 Chi tiết nhật ký</h3>
     <div style="text-align:left">
-      <p><strong>Hành động:</strong> ${log.action}</p>
-      <p><strong>Module:</strong> ${log.module}</p>
+      <p><strong>Hành động:</strong> ${escapeHtml(log.action)}</p>
+      <p><strong>Module:</strong> ${escapeHtml(log.module || 'N/A')}</p>
       <p><strong>Thời điểm:</strong> ${formatDateTime(log.created_at)}</p>
-      <p><strong>IP:</strong> ${log.ip}</p>
+      <p><strong>IP:</strong> ${escapeHtml(log.ip || 'N/A')}</p>
       <hr>
       <p><strong>Dữ liệu chi tiết:</strong></p>
-      <pre style="background:#f4f4f4; padding:10px; border-radius:4px; max-height:300px; overflow:auto">${escapeHtml(formattedDetail)}</pre>
+      <pre style="background:#f4f4f4; padding:10px; border-radius:4px; max-height:300px; overflow:auto; white-space: pre-wrap; font-family: monospace;">${escapeHtml(formattedDetail)}</pre>
+      <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
+        <button onclick="closeModal()">Đóng</button>
+      </div>
     </div>
-  `, { title: '📜 Chi tiết nhật ký' });
+  `);
 }
+
 async function loadAudit() {
   const { logs } = await api('/admin/audit');
   allLogs = logs;
@@ -552,59 +560,6 @@ document.getElementById('addUserBtn').onclick = async () => {
   }
 };
 
-async function loadPermsMatrix() {
-  const { roles, permissions, mapping } = await api('/admin/permissions/matrix');
-  
-  let html = '<table><thead><tr><th>Quyền hạn \ Vai trò</th>';
-  roles.forEach(r => html += `<th>${escapeHtml(r.name_vi)}</th>`);
-  html += '</tr></thead><tbody>';
-
-  permissions.forEach(p => {
-    html += `<tr>
-      <td><strong>${escapeHtml(p.name_vi)}</strong><br><small>${p.module}</small></td>`;
-    roles.forEach(r => {
-      // Kiểm tra xem quyền p.id có được gán cho role r.id không
-      const isChecked = mapping.some(m => m.role_id === r.id && m.permission_id === p.id);
-      html += `<td style="text-align:center">
-        <input type="checkbox" class="perm-cb" data-role="${r.id}" data-perm="${p.id}" ${isChecked ? 'checked' : ''}>
-      </td>`;
-    });
-    html += '</tr>';
-  });
-  
-  html += '</tbody></table>';
-  document.getElementById('perms-matrix-container').innerHTML = html;
-}
-
-// Xử lý lưu ma trận
-document.getElementById('savePermsBtn').onclick = async () => {
-  // Yêu cầu nhập mật khẩu thay vì chỉ confirm
-  const adminPwd = prompt('BẢO MẬT: Vui lòng nhập mật khẩu Admin của bạn để xác nhận đổi quyền:');
-  if (!adminPwd) return showMsg('<div class="msg err">Đã hủy thao tác lưu phân quyền.</div>');
-  
-  const checkboxes = document.querySelectorAll('.perm-cb');
-  const rolesData = {}; 
-  checkboxes.forEach(cb => {
-    const rId = cb.dataset.role;
-    if (!rolesData[rId]) rolesData[rId] = [];
-    if (cb.checked) rolesData[rId].push(Number(cb.dataset.perm));
-  });
-
-  try {
-    await withLoading('Đang lưu...', async () => {
-      for (const rId in rolesData) {
-        // Gửi kèm password xuống backend
-        await api('/admin/permissions/matrix', { 
-          method: 'POST', 
-          body: { role_id: Number(rId), permission_ids: rolesData[rId], admin_password: adminPwd } 
-        });
-      }
-    });
-    showMsg('<div class="msg ok">✓ Đã cập nhật ma trận quyền thành công!</div>');
-  } catch (e) {
-    showMsg('<div class="msg err">Lỗi: ' + e.message + '</div>');
-  }
-};
 // Gọi thêm loadFormOptions() trong hàm init()
 async function init() {
   try { 
@@ -613,7 +568,6 @@ async function init() {
     await loadUsers(); 
     await loadAudit(); 
     await loadFormOptions();
-    await loadPermsMatrix();
   } catch (e) { 
     showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); 
   }

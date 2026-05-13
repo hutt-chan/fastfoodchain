@@ -200,9 +200,14 @@ async function loadVouchers() {
     const { vouchers } = await api('/vouchers?branch_id=' + branchId);
     if (vouchers && vouchers.length > 0) {
       sel.innerHTML += vouchers.map(v => {
-        const desc = v.discount_type === 'PERCENT' 
+        let desc = v.discount_type === 'PERCENT' 
           ? `Giảm ${Number(v.discount_value)}%` 
           : `Giảm ${vnd(v.discount_value)}`;
+          
+        // Thêm câu thông báo tối đa nếu có giới hạn
+        if (v.discount_type === 'PERCENT' && v.max_discount_amount) {
+          desc += ` (Tối đa ${vnd(v.max_discount_amount)})`;
+        }
         return `<option value="${escapeHtml(v.code)}">${escapeHtml(v.code)} — ${desc} (Đơn từ ${vnd(v.min_order_amount)})</option>`;
       }).join('');
     }

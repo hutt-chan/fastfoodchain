@@ -458,6 +458,7 @@ document.getElementById('submitReq').onclick = async () => {
     loadReqHistory();
   } catch (e) { alertModal(e.message); }
 };
+
 async function loadReqHistory() {
   const { requests } = await api('/branch/stock-requests');
   document.getElementById('reqHistory').innerHTML = requests.length
