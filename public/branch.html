@@ -275,6 +275,11 @@ function renderOrders() {
           actions += ' <button class="danger" onclick="markFailed(' + o.id + ')" title="Khách boom hàng / Không liên lạc được" style="padding:0.25rem 0.55rem">✖ Thất bại</button>';
         }
 
+        // Thêm nút Thu COD đối với đơn đã hoàn tất và thanh toán COD
+        if (o.status === 'COMPLETED' && o.payment_method === 'COD') {
+          actions += ' <button onclick="markCodCollected(' + o.id + ')" style="padding:0.25rem 0.55rem">Thu COD</button>';
+        }
+
         actions += ' <button class="secondary" onclick="viewBranchOrder(' + o.id + ')" style="padding:0.25rem 0.55rem">Xem</button>';
 
         return '<tr>' +
@@ -474,7 +479,7 @@ async function loadReqHistory() {
           <td><span class="badge">${r.status}</span></td>
           <td>${r.is_urgent ? '⚡' : ''}</td>
           <td>${formatDateTime(r.created_at)}</td>
-          <td>${r.line_count}</td>
+          <td>${Number(r.line_count).toLocaleString('vi-VN')}</td>
           <td>${actions}</td>
         </tr>`;
       }).join('') +
@@ -512,10 +517,11 @@ window.viewReqDetail = async function(id) {
     const { request, lines } = await api('/branch/stock-requests/' + id);
     
     // Tạo danh sách nguyên liệu
+    //Hiện tại viewReqDetail (branch.html) hiển thị số lượng thô (ví dụ 1000 thay vì 1.000). Sửa để dùng toLocaleString
     const rows = lines.map(l => `<tr>
       <td>${escapeHtml(l.ingredient_name)} (${l.unit})</td>
-      <td>${l.qty_requested}</td>
-      <td><strong>${l.qty_approved !== null ? l.qty_approved : '<span style="color:#888">Đang chờ</span>'}</strong></td>
+      <td>${Number(l.qty_requested).toLocaleString('vi-VN')}</td>
+      <td><strong>${l.qty_approved !== null ? Number(l.qty_approved).toLocaleString('vi-VN') : '<span style="color:#888">Đang chờ</span>'}</strong></td>
     </tr>`).join('');
 
     // Hiển thị Modal
@@ -646,6 +652,19 @@ window.markFailed = async function(id) {
     showMsg('<div class="msg ok">✓ Đã chuyển trạng thái và ghi nhận hao hụt thực phẩm</div>');
     loadOrders(); loadDashboard();
   } catch (e) { alertModal(e.message); }
+};
+
+// =========================================================
+// XỬ LÝ ĐƠN THANH TOÁN COD
+// =========================================================
+window.markCodCollected = async (id) => {
+  if (!await confirmModal('Xác nhận đã thu tiền COD?')) return;
+  try {
+    await api('/branch/orders/' + id + '/mark-cod-collected', { method: 'POST', body: {} });
+    loadOrders();
+  } catch (e) { 
+    alertModal(e.message); 
+  }
 };
 
 // =========================================================

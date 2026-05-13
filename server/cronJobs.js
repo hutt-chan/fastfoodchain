@@ -48,7 +48,7 @@ async function autoDispatchShippers() {
       }
 
       // Nếu thời gian nấu còn lại <= thời gian Shipper di chuyển tới -> Gọi ngay để Shipper đến lấy là vừa nóng
-      if (maxRemaining <= leadMin) {
+      if (maxRemaining <= leadMin && maxRemaining > 0) {
         await dispatchDelivery(conn, o.id, o.branch_id, maxRemaining);
       }
     }

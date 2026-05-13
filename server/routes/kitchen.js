@@ -249,5 +249,18 @@ router.post(
     }
   })
 );
+// Lịch sử đơn hàng đã hoàn thành hoặc bị hủy để tiện tra cứu (Không show đơn đang nấu vì có thể rất nhiều)
+router.get('/history', K, async (req, res) => {
+  const bid = branchFilter(req);
+  if (!bid) return res.status(400).json({ error: 'Thiếu branch_id' });
+  const [orders] = await pool.execute(
+    `SELECT o.*, u.full_name AS customer_name FROM orders o
+     JOIN users u ON u.id = o.user_id
+     WHERE o.branch_id = ? AND o.status IN ('COMPLETED', 'CANCELLED', 'FAILED_DELIVERY')
+     ORDER BY o.created_at DESC LIMIT 100`,
+    [bid]
+  );
+  res.json({ orders });
+});
 
 module.exports = router;

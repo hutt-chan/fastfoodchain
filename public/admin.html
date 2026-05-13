@@ -21,6 +21,7 @@
     <button data-tab="branches">🏬 Chi nhánh</button>
     <button data-tab="users">👥 Người dùng</button>
     <button data-tab="audit">📜 Audit log</button>
+    <button data-tab="alerts">⚠️ Cảnh báo tồn</button>
   </div>
   <section id="tab-cfg" class="tab-panel active">
     <div class="card">
@@ -123,6 +124,20 @@
         <button id="exportAuditBtn" class="secondary" style="margin-left:auto">📥 Xuất CSV</button>
       </div>
       <div id="audit"></div>
+    </div>
+  </section>
+
+  <section id="tab-alerts" class="tab-panel">
+    <div class="card">
+      <h2>⚠️ Cảnh báo tồn kho thấp (UC-39)</h2>
+      <div class="filter-bar">
+        <select id="alertAck">
+          <option value="0">Chưa xác nhận</option>
+          <option value="1">Đã xác nhận</option>
+        </select>
+        <button id="loadAlerts" class="secondary">Tải</button>
+      </div>
+      <div id="alertsList"></div>
     </div>
   </section>
 </div>
@@ -572,6 +587,28 @@ async function init() {
     showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); 
   }
 }
+// Hàm mới để load cảnh báo tồn kho thấp
+async function loadAlerts() {
+  const ack = document.getElementById('alertAck').value;
+  const { alerts } = await api(`/admin/alerts/low-stock?ack=${ack}`);
+  const html = alerts.length ? `<div class="table-wrap"><table><thead><tr><th>ID</th><th>Nguyên liệu</th><th>Chi nhánh</th><th>Mức</th><th>Hiện tại</th><th>Ngưỡng</th><th></th></tr></thead><tbody>` +
+    alerts.map(a => `<tr>
+      <td>${a.id}</td>
+      <td>${escapeHtml(a.ingredient_name)} (${a.unit})</td>
+      <td>${escapeHtml(a.branch_name || 'Kho tổng')}</td>
+      <td>${a.level === 'SAFETY' ? '<span class="badge" style="background:var(--danger-bg);color:var(--danger)">An toàn</span>' : '<span class="badge warn">Đặt hàng</span>'}</td>
+      <td>${a.current_qty}</td>
+      <td>${a.threshold_qty}</td>
+      <td>${!a.acknowledged ? `<button onclick="ackAlert(${a.id})">Xác nhận</button>` : ''}</td>
+    </tr>`).join('') + '</tbody></table></div>' : '<p class="empty">Không có cảnh báo</p>';
+  document.getElementById('alertsList').innerHTML = html;
+}
+window.ackAlert = async (id) => {
+  await api(`/admin/alerts/${id}/ack`, { method:'POST' });
+  loadAlerts();
+};
+document.getElementById('loadAlerts').addEventListener('click', loadAlerts);
+// Gọi khi tab được chọn, thêm vào trong init nếu cần.
 
 init();
 </script>
