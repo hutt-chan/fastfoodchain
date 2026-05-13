@@ -14,11 +14,11 @@ router.get('/suppliers', W, async (req, res) => {
 
 // TÌM VÀ THAY THẾ API POST /suppliers CŨ BẰNG ĐOẠN NÀY:
 router.post('/suppliers', W, async (req, res) => {
-  const { name, tax_code, contact } = req.body;
+  const { name, tax_code, description, address, email, phone_contact, contact } = req.body;
   try {
     const [ins] = await pool.execute(
-      'INSERT INTO suppliers (name, tax_code, contact) VALUES (?,?,?)',
-      [name, tax_code || null, contact || null]
+      'INSERT INTO suppliers (name, tax_code, description, address, email, phone_contact, contact) VALUES (?,?,?,?,?,?,?)',
+      [name, tax_code || null, description || null, address || null, email || null, phone_contact || null, contact || null]
     );
     res.json({ id: ins.insertId });
   } catch (err) {
@@ -29,13 +29,13 @@ router.post('/suppliers', W, async (req, res) => {
   }
 });
 
-// THÊM MỚI API NÀY NGAY BÊN DƯỚI: Sửa / Tạm ngưng nhà cung cấp
+// Sửa / Tạm ngưng Nhà cung cấp (Cập nhật)
 router.put('/suppliers/:id', W, async (req, res) => {
-  const { name, tax_code, contact, is_active } = req.body;
+  const { name, tax_code, description, address, email, phone_contact, contact, is_active } = req.body;
   try {
     await pool.execute(
-      'UPDATE suppliers SET name = ?, tax_code = ?, contact = ?, is_active = ? WHERE id = ?',
-      [name, tax_code || null, contact || null, is_active ? 1 : 0, req.params.id]
+      'UPDATE suppliers SET name=?, tax_code=?, description=?, address=?, email=?, phone_contact=?, contact=?, is_active=? WHERE id=?',
+      [name, tax_code || null, description || null, address || null, email || null, phone_contact || null, contact || null, is_active ? 1 : 0, req.params.id]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -176,23 +176,39 @@ router.get('/central-inventory', W, async (req, res) => {
 
 router.post('/purchase-orders', W, async (req, res) => {
   const { supplier_id, lines } = req.body;
-  const [ins] = await pool.execute(
-    'INSERT INTO purchase_orders (supplier_id, status, total_amount) VALUES (?,?,0)',
-    [supplier_id, 'ORDERED']
-  );
-  const poId = ins.insertId;
-  let total = 0;
-  for (const l of lines || []) {
-    const t = Number(l.qty_ordered) * Number(l.unit_price);
-    total += t;
-    await pool.execute(
-      'INSERT INTO purchase_order_lines (purchase_order_id, ingredient_id, qty_ordered, unit_price) VALUES (?,?,?,?)',
-      [poId, l.ingredient_id, l.qty_ordered, l.unit_price]
+  const conn = await pool.getConnection(); // Cấp một kết nối riêng để có thể Rollback
+  
+  try {
+    await conn.beginTransaction();
+    const [ins] = await conn.execute(
+      'INSERT INTO purchase_orders (supplier_id, status, total_amount) VALUES (?,?,0)',
+      [supplier_id, 'ORDERED']
     );
+    const poId = ins.insertId;
+    let total = 0;
+    
+    for (const l of lines || []) {
+      const t = Number(l.qty_ordered) * Number(l.unit_price);
+      total += t;
+      await conn.execute(
+        'INSERT INTO purchase_order_lines (purchase_order_id, ingredient_id, qty_ordered, unit_price) VALUES (?,?,?,?)',
+        [poId, l.ingredient_id, l.qty_ordered, l.unit_price]
+      );
+    }
+    
+    await conn.execute('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [total, poId]);
+    await logAudit(req.user.id, 'PO_CREATE', 'warehouse', { poId }, req.ip);
+    
+    await conn.commit();
+    res.json({ id: poId, total });
+  } catch (err) {
+    // Nếu có lỗi, hoàn tác dữ liệu và báo lỗi về cho Frontend thay vì sập server
+    await conn.rollback();
+    console.error('Lỗi khi tạo PO:', err);
+    res.status(500).json({ error: 'Lỗi cơ sở dữ liệu: ' + err.message });
+  } finally {
+    conn.release();
   }
-  await pool.execute('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [total, poId]);
-  await logAudit(req.user.id, 'PO_CREATE', 'warehouse', { poId }, req.ip);
-  res.json({ id: poId, total });
 });
 
 
@@ -465,6 +481,7 @@ router.post('/central-inventory/adjust', W, async (req, res) => {
 });
 
 // UC-26: BÁO CÁO XUẤT - NHẬP - TỒN (Phiên bản Thẻ Kho)
+// UC-26: BÁO CÁO XUẤT - NHẬP - TỒN (Phiên bản Thẻ Kho)
 router.get('/reports/xnt', W, async (req, res) => {
   const { start, end } = req.query; 
   if (!start || !end) return res.status(400).json({ error: 'Thiếu tham số ngày' });
@@ -473,42 +490,40 @@ router.get('/reports/xnt', W, async (req, res) => {
   const startDateFull = `${start} 00:00:00`;
 
   try {
-    // const [ingredients] = await pool.execute('SELECT id, name, unit FROM ingredients ORDER BY name');
     const [ingredients] = await pool.execute('SELECT id, name, unit, purchase_unit, conversion_rate FROM ingredients ORDER BY name');
     
-    // Lấy tồn hiện tại của tất cả nguyên liệu
-    const [currentStocks] = await pool.execute('SELECT ingredient_id, quantity FROM central_inventory');
-    const stockMap = new Map(currentStocks.map(s => [s.ingredient_id, Number(s.quantity)]));
-
-    // Lấy tổng nhập trong kỳ
-    const [inPeriod] = await pool.execute(`
-      SELECT ingredient_id, SUM(qty_change) AS total_in
+    // 1. Tính tồn đầu kỳ (Tổng tất cả giao dịch TRƯỚC thời điểm start)
+    const [startStocks] = await pool.execute(`
+      SELECT ingredient_id, SUM(qty_change) AS start_qty
       FROM central_inventory_transactions
-      WHERE transaction_type IN ('PO_RECEIVE', 'ADJUSTMENT', 'RETURN')
-        AND created_at BETWEEN ? AND ?
-        AND qty_change > 0
+      WHERE created_at < ?
+      GROUP BY ingredient_id
+    `, [startDateFull]);
+
+    // 2. Tính Nhập / Xuất TRONG kỳ
+    // Gom chung 1 query dùng CASE WHEN để tối ưu hiệu suất Database
+    const [periodTransactions] = await pool.execute(`
+      SELECT 
+        ingredient_id, 
+        SUM(CASE WHEN qty_change > 0 THEN qty_change ELSE 0 END) AS total_in,
+        SUM(CASE WHEN qty_change < 0 THEN ABS(qty_change) ELSE 0 END) AS total_out
+      FROM central_inventory_transactions
+      WHERE created_at BETWEEN ? AND ?
       GROUP BY ingredient_id
     `, [startDateFull, endDateFull]);
 
-    // Lấy tổng xuất trong kỳ
-    const [outPeriod] = await pool.execute(`
-      SELECT ingredient_id, SUM(ABS(qty_change)) AS total_out
-      FROM central_inventory_transactions
-      WHERE transaction_type IN ('OUTBOUND', 'ADJUSTMENT', 'WASTE')
-        AND created_at BETWEEN ? AND ?
-        AND qty_change < 0
-      GROUP BY ingredient_id
-    `, [startDateFull, endDateFull]);
+    // 3. Mapping dữ liệu thành dạng Map để truy xuất cho nhanh
+    const startMap = new Map(startStocks.map(s => [s.ingredient_id, Number(s.start_qty)]));
+    const inMap = new Map(periodTransactions.map(r => [r.ingredient_id, Number(r.total_in)]));
+    const outMap = new Map(periodTransactions.map(r => [r.ingredient_id, Number(r.total_out)]));
 
-    const inMap = new Map(inPeriod.map(r => [r.ingredient_id, Number(r.total_in)]));
-    const outMap = new Map(outPeriod.map(r => [r.ingredient_id, Number(r.total_out)]));
-
+    // 4. Tổng hợp báo cáo
     const report = ingredients.map(ing => {
-      const currentQty = stockMap.get(ing.id) || 0;
+      const startStock = startMap.get(ing.id) || 0;
       const totalIn = inMap.get(ing.id) || 0;
       const totalOut = outMap.get(ing.id) || 0;
-      const startStock = currentQty - totalIn + totalOut; // suy ra tồn đầu kỳ
-      const endStock = currentQty;
+      const endStock = startStock + totalIn - totalOut; 
+
       return {
         id: ing.id,
         name: ing.name,
@@ -561,6 +576,64 @@ router.post('/outbounds/:id/cancel', W, async (req, res) => {
     res.status(400).json({ error: e.message });
   } finally {
     conn.release();
+  }
+});
+
+// --- BẢNG GIÁ / NGUYÊN LIỆU CỦA NHÀ CUNG CẤP ---
+
+// 1. Lấy danh sách nguyên liệu do 1 NCC cung cấp
+router.get('/suppliers/:id/ingredients', W, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT si.*, i.name, i.unit, i.purchase_unit 
+      FROM supplier_ingredients si
+      JOIN ingredients i ON i.id = si.ingredient_id
+      WHERE si.supplier_id = ? AND si.is_active = 1
+    `, [req.params.id]);
+    res.json({ items: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 2. Thêm hoặc Cập nhật giá nguyên liệu cho NCC (Upsert)
+router.post('/suppliers/:id/ingredients', W, async (req, res) => {
+  const supplier_id = req.params.id;
+  const { ingredient_id, reference_price, lead_time_days, is_preferred, supplier_sku, note } = req.body;
+  
+  try {
+    await pool.execute(`
+      INSERT INTO supplier_ingredients 
+      (supplier_id, ingredient_id, reference_price, lead_time_days, is_preferred, supplier_sku, note, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      ON DUPLICATE KEY UPDATE 
+      reference_price = VALUES(reference_price),
+      lead_time_days = VALUES(lead_time_days),
+      is_preferred = VALUES(is_preferred),
+      supplier_sku = VALUES(supplier_sku),
+      note = VALUES(note),
+      is_active = 1
+    `, [
+      supplier_id, ingredient_id, 
+      reference_price || 0, lead_time_days || 7, 
+      is_preferred ? 1 : 0, supplier_sku || null, note || null
+    ]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// 3. Xóa (Tạm ngưng) nguyên liệu khỏi danh mục của NCC
+router.delete('/suppliers/:id/ingredients/:ing_id', W, async (req, res) => {
+  try {
+    await pool.execute(
+      'UPDATE supplier_ingredients SET is_active = 0 WHERE supplier_id = ? AND ingredient_id = ?',
+      [req.params.id, req.params.ing_id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 

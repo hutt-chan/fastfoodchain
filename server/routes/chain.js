@@ -150,30 +150,43 @@ router.patch('/ingredients/:id', C, async (req, res) => {
 
 router.delete('/ingredients/:id', C, async (req, res) => {
   try {
-    // 1. Kiểm tra tồn kho (Nghiêm cấm xóa nếu còn hàng)
-    const [[cStock]] = await pool.execute('SELECT SUM(quantity) as qty FROM central_inventory WHERE ingredient_id = ?', [req.params.id]);
-    const [[bStock]] = await pool.execute('SELECT SUM(quantity) as qty FROM branch_inventory WHERE ingredient_id = ?', [req.params.id]);
+    const iid = req.params.id;
+
+    // 1. Kiểm tra tồn kho
+    const [[cStock]] = await pool.execute('SELECT SUM(quantity) as qty FROM central_inventory WHERE ingredient_id = ?', [iid]);
+    const [[bStock]] = await pool.execute('SELECT SUM(quantity) as qty FROM branch_inventory WHERE ingredient_id = ?', [iid]);
     
     if ((cStock && Number(cStock.qty) > 0) || (bStock && Number(bStock.qty) > 0)) {
       return res.status(400).json({ error: 'Không thể xóa! Nguyên liệu này vẫn đang còn tồn kho thực tế.' });
     }
 
-    // 2. Kiểm tra định mức BOM
-    const [[checkBom]] = await pool.execute('SELECT COUNT(*) AS c FROM product_bom WHERE ingredient_id = ?', [req.params.id]);
-    if (checkBom.c > 0) return res.status(400).json({ error: 'Không thể xóa! Nguyên liệu đang nằm trong BOM của món ăn.' });
+    // 2. Kiểm tra BOM - CHỈ tính sản phẩm chưa xóa
+    const [[checkBom]] = await pool.execute(`
+      SELECT COUNT(*) AS c 
+      FROM product_bom pb
+      JOIN products p ON p.id = pb.product_id
+      WHERE pb.ingredient_id = ? AND p.is_deleted = 0
+    `, [iid]);
 
-    // 3. Tiến hành xóa nếu an toàn
-    await pool.execute('DELETE FROM central_inventory WHERE ingredient_id = ?', [req.params.id]);
-    await pool.execute('DELETE FROM branch_inventory WHERE ingredient_id = ?', [req.params.id]);
-    await pool.execute('DELETE FROM ingredients WHERE id = ?', [req.params.id]);
+    if (checkBom.c > 0) {
+      return res.status(400).json({ 
+        error: `Không thể xóa! Nguyên liệu đang được sử dụng trong BOM của ${checkBom.c} sản phẩm đang hoạt động.` 
+      });
+    }
+
+    // 3. Xóa nguyên liệu
+    await pool.execute('DELETE FROM central_inventory WHERE ingredient_id = ?', [iid]);
+    await pool.execute('DELETE FROM branch_inventory WHERE ingredient_id = ?', [iid]);
+    await pool.execute('DELETE FROM ingredients WHERE id = ?', [iid]);
     
-    await logAudit(req.user.id, 'INGREDIENT_DELETE', 'chain', { id: req.params.id }, req.ip);
+    await logAudit(req.user.id, 'INGREDIENT_DELETE', 'chain', { id: iid }, req.ip);
     res.json({ ok: true });
 
   } catch (err) {
-    // 4. Bắt lỗi khóa ngoại (Đã từng nhập/xuất hàng)
     if (err.code === 'ER_ROW_IS_REFERENCED_2' || err.errno === 1451) {
-      return res.status(400).json({ error: 'Không thể xóa! Nguyên liệu đã có lịch sử giao dịch (Nhập/Xuất/Hủy).' });
+      return res.status(400).json({ 
+        error: 'Không thể xóa! Nguyên liệu đã có lịch sử giao dịch (Nhập/Xuất/Hủy).' 
+      });
     }
     console.error(err);
     res.status(500).json({ error: 'Lỗi server khi xóa nguyên liệu' });
@@ -190,17 +203,43 @@ router.get('/products', C, async (req, res) => {
   res.json({ products: rows });
 });
 
+
+
+// Xóa sản phẩm + xóa luôn BOM
 router.delete('/products/:id', C, async (req, res) => {
-  await pool.execute(
-    'UPDATE products SET is_deleted = 1, deleted_at = NOW(), is_active_chain = 0 WHERE id = ?',
-    [req.params.id]
-  );
-  await pool.execute(
-    'UPDATE branch_menu SET is_available = 0 WHERE product_id = ?',
-    [req.params.id]
-  );
-  await logAudit(req.user.id, 'PRODUCT_SOFT_DELETE', 'chain', { pid: req.params.id }, req.ip);
-  res.json({ ok: true });
+  const pid = req.params.id;
+  const conn = await pool.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    // 1. Soft delete sản phẩm
+    await conn.execute(
+      'UPDATE products SET is_deleted = 1, deleted_at = NOW(), is_active_chain = 0 WHERE id = ?',
+      [pid]
+    );
+
+    // 2. Tắt availability ở chi nhánh
+    await conn.execute(
+      'UPDATE branch_menu SET is_available = 0 WHERE product_id = ?',
+      [pid]
+    );
+
+    // 3. XÓA BOM của sản phẩm này
+    await conn.execute('DELETE FROM product_bom WHERE product_id = ?', [pid]);
+
+    await conn.commit();
+
+    await logAudit(req.user.id, 'PRODUCT_SOFT_DELETE', 'chain', { pid }, req.ip);
+    res.json({ ok: true });
+
+  } catch (err) {
+    await conn.rollback();
+    console.error('Lỗi xóa sản phẩm:', err);
+    res.status(500).json({ error: 'Lỗi server khi xóa sản phẩm' });
+  } finally {
+    conn.release();
+  }
 });
 
 router.post('/products/:id/restore', C, async (req, res) => {
