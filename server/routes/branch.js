@@ -116,15 +116,21 @@ router.patch('/menu/:productId', B, async (req, res) => {
 router.get('/inventory', B, async (req, res) => {
   const bid = req.user.branch_id;
   const [rows] = await pool.execute(
-    `SELECT bi.*, i.name, i.unit FROM branch_inventory bi
+    `SELECT bi.*, i.name, i.unit, i.purchase_unit, i.conversion_rate 
+     FROM branch_inventory bi
      JOIN ingredients i ON i.id = bi.ingredient_id WHERE bi.branch_id = ?`,
     [bid]
   );
   res.json({ inventory: rows });
 });
 
+// router.get('/ingredients', B, async (req, res) => {
+//   const [rows] = await pool.execute('SELECT id, name, unit FROM ingredients ORDER BY name');
+//   res.json({ ingredients: rows });
+// });
+
 router.get('/ingredients', B, async (req, res) => {
-  const [rows] = await pool.execute('SELECT id, name, unit FROM ingredients ORDER BY name');
+  const [rows] = await pool.execute('SELECT id, name, unit, purchase_unit, conversion_rate FROM ingredients ORDER BY name');
   res.json({ ingredients: rows });
 });
 
@@ -151,8 +157,9 @@ router.get('/stock-requests/:id', B, async (req, res) => {
   if (!request) return res.status(404).json({ error: 'Không tìm thấy phiếu xin hàng' });
 
   // Lấy chi tiết các dòng nguyên liệu trong phiếu
+  // Lấy chi tiết các dòng nguyên liệu trong phiếu
   const [lines] = await pool.execute(
-    `SELECT srl.*, i.name AS ingredient_name, i.unit 
+    `SELECT srl.*, i.name AS ingredient_name, i.unit, i.purchase_unit, i.conversion_rate 
      FROM stock_request_lines srl
      JOIN ingredients i ON i.id = srl.ingredient_id 
      WHERE srl.stock_request_id = ?`,
@@ -266,35 +273,160 @@ router.post('/stock-requests', B, async (req, res) => {
 //   res.json({ summary: s });
 // });
 
-router.get('/reports', B, async (req, res) => {
+// router.get('/reports', B, async (req, res) => {
+//   const bid = req.user.branch_id;
+//   const from = req.query.from || '1970-01-01';
+//   const to = req.query.to || '2099-12-31';
+//   const type = req.query.type || 'day'; // Loại báo cáo mặc định là theo ngày
+
+//   // Lấy tổng quan (Summary) như cũ
+//   const [[s]] = await pool.execute(
+//     `SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS orders FROM orders
+//      WHERE branch_id = ? AND status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?`,
+//     [bid, from, to]
+//   );
+
+//   // Xây dựng câu SQL để nhóm chi tiết (Details)
+//   let dateFormatSQL = '';
+//   if (type === 'day') {
+//     dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m-%d")'; // Nhóm theo ngày
+//   } else if (type === 'month') {
+//     dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m")';    // Nhóm theo tháng
+//   } else if (type === 'year') {
+//     dateFormatSQL = 'DATE_FORMAT(created_at, "%Y")';       // Nhóm theo năm
+//   }
+
+//   // Lấy danh sách chi tiết
+//   const [details] = await pool.execute(
+//     `SELECT 
+//         ${dateFormatSQL} AS label, 
+//         COALESCE(SUM(total),0) AS revenue, 
+//         COUNT(*) AS orders 
+//      FROM orders
+//      WHERE branch_id = ? AND status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?
+//      GROUP BY label
+//      ORDER BY label DESC`,
+//     [bid, from, to]
+//   );
+
+//   // Trả về cả tổng quan và chi tiết
+//   res.json({ summary: s, details: details });
+// });
+
+// branch.js - thay thế route GET /reports
+
+router.get('/reports', B, asyncHandler(async (req, res) => {
   const bid = req.user.branch_id;
   const from = req.query.from || '1970-01-01';
   const to = req.query.to || '2099-12-31';
-  const type = req.query.type || 'day'; // Loại báo cáo mặc định là theo ngày
+  const type = req.query.type || 'day'; // giữ để nhóm chi tiết nếu cần
 
-  // Lấy tổng quan (Summary) như cũ
-  const [[s]] = await pool.execute(
-    `SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS orders FROM orders
+  // Lấy ngưỡng thời gian "đúng giờ" từ config (phút)
+  const { getNumberConfig } = require('../services/configService');
+  const onTimeThresholdMinutes = await getNumberConfig('on_time_threshold_minutes', 60);
+
+  // ========== 1. Tổng quan cho chi nhánh ==========
+  const [[branchStats]] = await pool.execute(
+    `SELECT 
+       COALESCE(SUM(total),0) AS revenue,
+       COUNT(*) AS orders,
+       ROUND(COALESCE(SUM(total),0) / NULLIF(COUNT(*),0), 2) AS aov
+     FROM orders
      WHERE branch_id = ? AND status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?`,
     [bid, from, to]
   );
 
-  // Xây dựng câu SQL để nhóm chi tiết (Details)
-  let dateFormatSQL = '';
-  if (type === 'day') {
-    dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m-%d")'; // Nhóm theo ngày
-  } else if (type === 'month') {
-    dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m")';    // Nhóm theo tháng
-  } else if (type === 'year') {
-    dateFormatSQL = 'DATE_FORMAT(created_at, "%Y")';       // Nhóm theo năm
-  }
+  // Thời gian nấu trung bình (giây) – chỉ tính đơn có kitchen_started_at và kitchen_finished_at
+  const [[cookingTime]] = await pool.execute(
+    `SELECT AVG(TIMESTAMPDIFF(SECOND, kitchen_started_at, kitchen_finished_at)) AS avg_seconds
+     FROM orders
+     WHERE branch_id = ? AND status = 'COMPLETED'
+       AND kitchen_started_at IS NOT NULL AND kitchen_finished_at IS NOT NULL
+       AND DATE(created_at) BETWEEN ? AND ?`,
+    [bid, from, to]
+  );
+  const avgCookingSeconds = cookingTime.avg_seconds ? Math.round(cookingTime.avg_seconds) : 0;
 
-  // Lấy danh sách chi tiết
+  // Tỷ lệ đơn đúng giờ (completed_at <= created_at + threshold minutes)
+  const [[onTimeStats]] = await pool.execute(
+    `SELECT 
+       COUNT(*) AS total_completed,
+       SUM(CASE 
+         WHEN completed_at <= DATE_ADD(created_at, INTERVAL ? MINUTE) THEN 1 
+         ELSE 0 
+       END) AS on_time_count
+     FROM orders
+     WHERE branch_id = ? AND status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?`,
+    [onTimeThresholdMinutes, bid, from, to]
+  );
+  const onTimeRate = onTimeStats.total_completed > 0
+    ? (onTimeStats.on_time_count / onTimeStats.total_completed) * 100
+    : 0;
+
+  // ========== 2. Top 5 món bán chạy ==========
+  const [topProducts] = await pool.execute(
+    `SELECT p.id, p.name, SUM(oi.quantity) AS total_quantity
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id
+     JOIN products p ON p.id = oi.product_id
+     WHERE o.branch_id = ? AND o.status = 'COMPLETED'
+       AND DATE(o.created_at) BETWEEN ? AND ?
+     GROUP BY p.id, p.name
+     ORDER BY total_quantity DESC
+     LIMIT 5`,
+    [bid, from, to]
+  );
+
+  // ========== 3. Trung bình toàn chuỗi (không filter branch) ==========
+  const [[chainStats]] = await pool.execute(
+    `SELECT 
+       COALESCE(SUM(total),0) AS total_revenue,
+       COUNT(*) AS total_orders
+     FROM orders
+     WHERE status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?`,
+    [from, to]
+  );
+  const chainAOV = chainStats.total_orders > 0
+    ? chainStats.total_revenue / chainStats.total_orders
+    : 0;
+
+  const [[chainCooking]] = await pool.execute(
+    `SELECT AVG(TIMESTAMPDIFF(SECOND, kitchen_started_at, kitchen_finished_at)) AS avg_seconds
+     FROM orders
+     WHERE status = 'COMPLETED'
+       AND kitchen_started_at IS NOT NULL AND kitchen_finished_at IS NOT NULL
+       AND DATE(created_at) BETWEEN ? AND ?`,
+    [from, to]
+  );
+  const chainAvgCookingSeconds = chainCooking.avg_seconds ? Math.round(chainCooking.avg_seconds) : 0;
+
+  const [[chainOnTime]] = await pool.execute(
+    `SELECT 
+       COUNT(*) AS total_completed,
+       SUM(CASE 
+         WHEN completed_at <= DATE_ADD(created_at, INTERVAL ? MINUTE) THEN 1 
+         ELSE 0 
+       END) AS on_time_count
+     FROM orders
+     WHERE status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?`,
+    [onTimeThresholdMinutes, from, to]
+  );
+  const chainOnTimeRate = chainOnTime.total_completed > 0
+    ? (chainOnTime.on_time_count / chainOnTime.total_completed) * 100
+    : 0;
+
+  // ========== 4. Chi tiết theo nhóm (ngày/tháng/năm) - giữ nguyên từ code cũ ==========
+  let dateFormatSQL = '';
+  if (type === 'day') dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
+  else if (type === 'month') dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m")';
+  else if (type === 'year') dateFormatSQL = 'DATE_FORMAT(created_at, "%Y")';
+  else dateFormatSQL = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
+
   const [details] = await pool.execute(
     `SELECT 
-        ${dateFormatSQL} AS label, 
-        COALESCE(SUM(total),0) AS revenue, 
-        COUNT(*) AS orders 
+        ${dateFormatSQL} AS label,
+        COALESCE(SUM(total),0) AS revenue,
+        COUNT(*) AS orders
      FROM orders
      WHERE branch_id = ? AND status = 'COMPLETED' AND DATE(created_at) BETWEEN ? AND ?
      GROUP BY label
@@ -302,9 +434,24 @@ router.get('/reports', B, async (req, res) => {
     [bid, from, to]
   );
 
-  // Trả về cả tổng quan và chi tiết
-  res.json({ summary: s, details: details });
-});
+  // ========== 5. Trả về kết quả ==========
+  res.json({
+    summary: {
+      revenue: branchStats.revenue,
+      orders: branchStats.orders,
+      aov: branchStats.aov,
+      avg_cooking_seconds: avgCookingSeconds,
+      on_time_rate: parseFloat(onTimeRate.toFixed(2))
+    },
+    top_products: topProducts,
+    chain_averages: {
+      aov: parseFloat(chainAOV.toFixed(2)),
+      avg_cooking_seconds: chainAvgCookingSeconds,
+      on_time_rate: parseFloat(chainOnTimeRate.toFixed(2))
+    },
+    details: details
+  });
+}));
 
 /** Goi van chuyen (UC-36 mock) — chuyen don sang DELIVERING */
 /**
@@ -312,55 +459,65 @@ router.get('/reports', B, async (req, res) => {
  * - Nếu đã đóng gói (packaged_at): pickup ngay (lead_time tối thiểu).
  * - Nếu chưa: ước tính = max(prep_time còn lại) + lead_time + queue tại bếp (số COOKING khác).
  */
-router.post(
-  '/orders/:id/dispatch-delivery',
-  B,
-  asyncHandler(async (req, res) => {
-    const { getNumberConfig } = require('../services/configService');
-    const scope = branchScope(req);
-    const [[before]] = await pool.execute('SELECT * FROM orders WHERE id = ?', [req.params.id]);
-    if (!before) return res.status(404).json({ error: 'Khong tim thay' });
+// Sửa API: Gọi xe thủ công (Chỉ đổi tracking, không ép đơn thành DELIVERING)
+// router.post('/orders/:id/dispatch-delivery', B, asyncHandler(async (req, res) => {
+//   const shipmentId = 'SHIP-MANUAL-' + Date.now();
+//   await pool.execute(
+//     `INSERT INTO delivery_tracking (order_id, external_shipment_id, status) VALUES (?, ?, ?)
+//      ON DUPLICATE KEY UPDATE external_shipment_id = VALUES(external_shipment_id), status = VALUES(status)`,
+//     [req.params.id, shipmentId, 'DRIVER_ON_WAY']
+//   );
+//   await pool.execute(
+//     `INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)`,
+//     [req.params.id, 'SYSTEM_LOG', 'Quản lý gọi xe thủ công: ' + shipmentId]
+//   );
+//   res.json({ ok: true, shipment_id: shipmentId });
+// }));
 
-    // ETA động (UC-36)
-    const leadMin = await getNumberConfig('dispatch_lead_time_min', 5);
-    let etaMin = leadMin;
-    if (!before.packaged_at) {
-      const [items] = await pool.execute(
-        `SELECT oi.product_id, oi.cook_status, p.prep_time_minutes
-         FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?`,
-        [before.id]
-      );
-      let maxRemaining = 0;
-      for (const it of items) {
-        if (it.cook_status === 'READY') continue;
-        const elapsed = before.kitchen_started_at ? Math.max(0, (Date.now() - new Date(before.kitchen_started_at).getTime()) / 60000) : 0;
-        const remain = Math.max(0, Number(it.prep_time_minutes) - elapsed);
-        if (remain > maxRemaining) maxRemaining = remain;
-      }
-      const [[busy]] = await pool.execute(
-        `SELECT COUNT(*) AS c FROM orders WHERE branch_id = ? AND status IN ('COOKING','AWAITING_KITCHEN')`,
-        [before.branch_id]
-      );
-      const queuePenalty = Math.min(15, Math.floor(Number(busy.c) / 3) * 2); // 2 phút mỗi 3 đơn
-      etaMin = Math.ceil(leadMin + maxRemaining + queuePenalty);
-    }
+// Thêm API Giả lập: Shipper giao thành công
+// router.post('/orders/:id/mock-complete', B, asyncHandler(async (req, res) => {
+//   const scope = branchScope(req);
+//   await transitionOrder(req.params.id, OrderStatus.COMPLETED, {
+//     note: 'Shipper đã giao xong (Mock)',
+//     branchId: scope,
+//     role: req.user.role,
+//   });
+//   res.json({ ok: true });
+// }));
 
-    await transitionOrder(req.params.id, OrderStatus.DELIVERING, {
-      note: 'Đã gọi ĐVVC — ETA ~' + etaMin + ' phút',
-      branchId: scope,
-      role: req.user.role,
-    });
-    const shipId = 'SHIP-' + Date.now();
-    await pool.execute(
-      `INSERT INTO delivery_tracking (order_id, external_shipment_id, status, last_lat, last_lng)
-       VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE external_shipment_id = VALUES(external_shipment_id),
-       status = VALUES(status), last_lat = VALUES(last_lat), last_lng = VALUES(last_lng)`,
-      [before.id, shipId, 'DELIVERING', Number(before.delivery_lat) || 0, Number(before.delivery_lng) || 0]
-    );
-    res.json({ ok: true, shipment_id: shipId, eta_minutes: etaMin });
-  })
-);
+// Thêm API: Từ chối đơn hàng (Hủy) khi quá tải/hết món
+router.post('/orders/:id/reject', B, asyncHandler(async (req, res) => {
+  const { reason } = req.body;
+  const scope = branchScope(req);
+  
+  const [[order]] = await pool.execute('SELECT status FROM orders WHERE id = ?', [req.params.id]);
+  if (!order || order.status !== 'PENDING_BRANCH') return res.status(400).json({ error: 'Chỉ được từ chối đơn chờ xác nhận' });
 
+  await transitionOrder(req.params.id, OrderStatus.CANCELLED, {
+    note: reason || 'Quán từ chối do quá tải/sự cố',
+    branchId: scope,
+    role: req.user.role,
+  });
+  // (Nếu có thanh toán Online thì gọi API Refund ở đây)
+  res.json({ ok: true });
+}));
+
+// Thêm API Giả lập: Shipper giao thành công
+router.post('/orders/:id/mock-complete', B, asyncHandler(async (req, res) => {
+  const scope = branchScope(req);
+  
+  // 1. Chuyển trạng thái đơn hàng thành COMPLETED
+  await transitionOrder(req.params.id, OrderStatus.COMPLETED, {
+    note: 'Shipper đã giao xong (Mock)',
+    branchId: scope,
+    role: req.user.role,
+  });
+
+  // 2. TỰ ĐỘNG CHỐT THANH TOÁN: Đổi payment_status thành 'PAID' (hoặc 'COMPLETED')
+  await pool.execute('UPDATE orders SET payment_status = ? WHERE id = ?', ['PAID', req.params.id]);
+
+  res.json({ ok: true });
+}));
 // ==========================================
 // KHU VỰC KDS (KITCHEN DISPLAY SYSTEM) - UC-33 & UC-34
 // ==========================================
@@ -405,19 +562,41 @@ router.post('/kitchen/items/:itemId/start', B, async (req, res) => {
 });
 
 // UC-34: Nhân viên bếp bấm "Xong" 1 món (Chuyển ra khâu đóng gói)
+// [branch.js] - Cập nhật API báo xong món
 router.post('/kitchen/items/:itemId/ready', B, async (req, res) => {
   const itemId = req.params.itemId;
   
+  // 1. Đánh dấu món đã xong
   await pool.execute(
     `UPDATE order_items SET cook_status = 'READY', cook_finished_at = NOW() WHERE id = ?`,
     [itemId]
   );
 
-  // Mở rộng logic: Bạn có thể thêm đoạn code kiểm tra xem nều TẤT CẢ các món trong 
-  // đơn này đã 'READY' thì chuyển đơn sang trạng thái 'AWAITING_SHIPPER'
-  
-  res.json({ ok: true, message: 'Đã chuyển món ra quầy đóng gói' });
+  // 2. Kiểm tra xem toàn bộ các món trong đơn đã READY chưa
+  const [[item]] = await pool.execute('SELECT order_id FROM order_items WHERE id = ?', [itemId]);
+  if (item) {
+    const [[remains]] = await pool.execute(
+      `SELECT COUNT(*) as c FROM order_items WHERE order_id = ? AND cook_status != 'READY'`,
+      [item.order_id]
+    );
+
+    // Nếu không còn món nào đang nấu -> Đơn đã đóng gói xong
+    if (remains.c === 0) {
+      await pool.execute(
+        `UPDATE orders SET status = 'AWAITING_SHIPPER', packaged_at = NOW() WHERE id = ?`,
+        [item.order_id]
+      );
+      // Ghi log vào lịch sử
+      await pool.execute(
+        `INSERT INTO order_status_history (order_id, status, note) VALUES (?, 'AWAITING_SHIPPER', 'Bếp đã hoàn tất tất cả món và đóng gói.')`,
+        [item.order_id]
+      );
+    }
+  }
+  res.json({ ok: true });
 });
+
+// !!! LƯU Ý: XÓA ĐOẠN setInterval(..., 30000) Ở CUỐI FILE branch.js !!!
 
 /* ===================== UC-30: Phiếu điều chỉnh tồn kho ===================== */
 
@@ -511,41 +690,62 @@ router.post(
     try {
       await conn.beginTransaction();
       const [[o]] = await conn.execute('SELECT * FROM orders WHERE id = ? FOR UPDATE', [orderId]);
-      if (!o) { await conn.rollback(); return res.status(404).json({ error: 'Không tìm thấy' }); }
-      if (o.status !== OrderStatus.DELIVERING && o.status !== OrderStatus.AWAITING_SHIPPER) {
-        await conn.rollback(); return res.status(400).json({ error: 'Đơn không ở trạng thái có thể đánh dấu giao thất bại' });
+      
+      if (!o) { 
+        await conn.rollback(); 
+        return res.status(404).json({ error: 'Không tìm thấy' }); 
       }
-      // Tính tổng chi phí món + ghi waste
+      
+      // Cho phép boom hàng khi đang chờ shipper hoặc đang giao
+      if (o.status !== 'DELIVERING' && o.status !== 'AWAITING_SHIPPER') {
+        await conn.rollback(); 
+        return res.status(400).json({ error: 'Đơn không ở trạng thái có thể đánh dấu giao thất bại' });
+      }
+      
+      // Tính tổng chi phí món + ghi hao hụt (Waste)
       const [items] = await conn.execute(
         `SELECT oi.*, p.base_price FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?`,
         [orderId]
       );
+      
       let totalCost = 0;
       for (const it of items) totalCost += Number(it.unit_price) * Number(it.quantity);
+      
       const [insW] = await conn.execute(
         `INSERT INTO food_waste (branch_id, order_id, reason, total_cost, created_by) VALUES (?,?,?,?,?)`,
         [o.branch_id, orderId, 'DELIVERY_FAILED', totalCost, req.user.id]
       );
       const wid = insW.insertId;
+      
       for (const it of items) {
         await conn.execute(
           `INSERT INTO food_waste_lines (waste_id, product_id, quantity, unit_cost) VALUES (?,?,?,?)`,
           [wid, it.product_id, it.quantity, it.unit_price]
         );
       }
+      
       // Chuyển trạng thái đơn → FAILED_DELIVERY, đánh dấu COD_FAILED nếu COD
       await conn.execute(
-        `UPDATE orders SET status = ?, payment_status = CASE WHEN payment_method = 'COD' THEN 'COD_FAILED' ELSE payment_status END,
-         cancel_reason = ? WHERE id = ?`,
-        [OrderStatus.FAILED_DELIVERY, reason || 'Khách boom hàng', orderId]
+        `UPDATE orders SET status = ?, payment_status = CASE WHEN payment_method = 'COD' THEN 'COD_FAILED' ELSE payment_status END, cancel_reason = ? WHERE id = ?`,
+        ['FAILED_DELIVERY', reason || 'Khách boom hàng', orderId]
       );
-      await appendStatusHistory(conn, orderId, OrderStatus.FAILED_DELIVERY, reason || 'Giao thất bại - boom hàng');
+      
+      // FIX LỖI 500: Dùng câu lệnh INSERT thay vì gọi hàm ảo
+      await conn.execute(
+        'INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)',
+        [orderId, 'FAILED_DELIVERY', reason || 'Giao thất bại - boom hàng']
+      );
+      
       await conn.commit();
+      
       await logAudit(req.user.id, 'ORDER_FAILED_DELIVERY', 'branch', { orderId, wasteId: wid, totalCost }, req.ip);
       res.json({ ok: true, waste_id: wid, total_cost: totalCost });
     } catch (e) {
-      await conn.rollback(); throw e;
-    } finally { conn.release(); }
+      await conn.rollback(); 
+      throw e;
+    } finally { 
+      conn.release(); 
+    }
   })
 );
 
@@ -672,16 +872,16 @@ router.get('/cash-shifts', B, async (req, res) => {
   res.json({ shifts: rows });
 });
 // API UC: Đánh dấu đã thu tiền COD (COD_COLLECTED)
-router.post('/orders/:id/mark-cod-collected', B, asyncHandler(async (req, res) => {
-  const scope = branchScope(req);
-  const [[o]] = await pool.execute('SELECT * FROM orders WHERE id = ?', [req.params.id]);
-  if (!o) return res.status(404).json({ error: 'Không tìm thấy' });
-  if (req.user.role !== 'ADMIN' && Number(o.branch_id) !== Number(scope))
-    return res.status(403).json({ error: 'Không thuộc chi nhánh bạn' });
-  await pool.execute('UPDATE orders SET payment_status = ? WHERE id = ?', ['COD_COLLECTED', o.id]);
-  await logAudit(req.user.id, 'COD_COLLECTED', 'branch', { orderId: o.id }, req.ip);
-  res.json({ ok: true });
-}));
+// router.post('/orders/:id/mark-cod-collected', B, asyncHandler(async (req, res) => {
+//   const scope = branchScope(req);
+//   const [[o]] = await pool.execute('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+//   if (!o) return res.status(404).json({ error: 'Không tìm thấy' });
+//   if (req.user.role !== 'ADMIN' && Number(o.branch_id) !== Number(scope))
+//     return res.status(403).json({ error: 'Không thuộc chi nhánh bạn' });
+//   await pool.execute('UPDATE orders SET payment_status = ? WHERE id = ?', ['COD_COLLECTED', o.id]);
+//   await logAudit(req.user.id, 'COD_COLLECTED', 'branch', { orderId: o.id }, req.ip);
+//   res.json({ ok: true });
+// }));
 
 // =========================================================
 // BỔ SUNG UC-30: CHI NHÁNH NHẬN HÀNG TỪ KHO TỔNG
@@ -698,7 +898,8 @@ router.get('/outbounds/:id', B, async (req, res) => {
   if (!ob) return res.status(404).json({ error: 'Không tìm thấy phiếu xuất' });
 
   const [lines] = await pool.execute(
-    `SELECT sol.*, i.name, i.unit FROM stock_outbound_lines sol
+    `SELECT sol.*, i.name, i.unit, i.purchase_unit, i.conversion_rate 
+     FROM stock_outbound_lines sol
      JOIN ingredients i ON i.id = sol.ingredient_id WHERE sol.stock_outbound_id = ?`,
     [ob.id]
   );
@@ -802,6 +1003,10 @@ router.post('/outbounds/:id/report-issue', B, asyncHandler(async (req, res) => {
 // =========================================================
 // UC-29: QUẢN LÝ NHÂN SỰ CHI NHÁNH
 // =========================================================
+
+// =========================================================
+// UC-29: QUẢN LÝ NHÂN SỰ CHI NHÁNH
+// =========================================================
 router.get('/staff', B, async (req, res) => {
   const bid = req.user.branch_id;
   const [rows] = await pool.execute(
@@ -811,33 +1016,91 @@ router.get('/staff', B, async (req, res) => {
      WHERE u.branch_id = ? AND u.is_deleted = 0 ORDER BY u.id DESC`,
     [bid]
   );
-  
-  // Lấy thêm danh sách vai trò cho form thêm nhân viên (Chỉ lấy vai trò Bếp, Shipper, Thu ngân...)
-  const [roles] = await pool.execute(`SELECT id, code, name_vi FROM roles WHERE code != 'ADMIN' AND code != 'CHAIN_MANAGER'`);
-  res.json({ staff: rows, roles });
+  // Chỉ cần trả về danh sách staff, không cần trả về roles nữa
+  res.json({ staff: rows });
 });
 
+// =========================================================
+// API: Thêm nhân sự chi nhánh (Đã fix lỗi async/await)
+// =========================================================
 router.post('/staff', B, asyncHandler(async (req, res) => {
   const bid = req.user.branch_id;
-  const { full_name, phone, email, password, role_id } = req.body;
+  const { full_name, phone, email, password } = req.body;
   
-  if (!full_name || !phone || !password || !role_id) {
+  if (!full_name || !phone || !password) {
     return res.status(400).json({ error: 'Vui lòng điền đủ các trường bắt buộc' });
   }
+
+  // TỰ ĐỘNG GÁN QUYỀN NHÂN VIÊN BẾP: Truy vấn lấy id của quyền KITCHEN
+  const [[kitchenRole]] = await pool.execute(`SELECT id FROM roles WHERE code = 'KITCHEN_STAFF'`);
+  if (!kitchenRole) { 
+    return res.status(500).json({ error: 'Lỗi hệ thống: Chưa có cấu hình quyền KITCHEN' });
+  }
+  const role_id = kitchenRole.id;
 
   const bcrypt = require('bcrypt');
   const hash = await bcrypt.hash(password, 10);
 
-  const [ins] = await pool.execute(
-    `INSERT INTO users (full_name, phone, email, password_hash, branch_id, role_id, is_active, must_change_password)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 1)`,
-    [full_name, phone, email || null, hash, bid, role_id]
-  );
-  
-  await logAudit(req.user.id, 'STAFF_CREATE', 'branch', { target_id: ins.insertId }, req.ip);
-  res.json({ ok: true, id: ins.insertId });
+  try {
+    const [ins] = await pool.execute(
+      `INSERT INTO users (full_name, phone, email, password_hash, role_id, branch_id) VALUES (?, ?, ?, ?, ?, ?)`,
+      [full_name, phone, email || null, hash, role_id, bid]
+    );
+    res.json({ id: ins.insertId, message: 'Đã tạo nhân viên thành công' });
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Số điện thoại hoặc email này đã tồn tại trong hệ thống!' });
+    }
+    throw e;
+  }
 }));
 
+// =========================================================
+// API: Khóa / Mở khóa tài khoản nhân viên 
+// =========================================================
+// branch.js - cập nhật route toggle-status
+router.patch('/staff/:id/toggle-status', B, asyncHandler(async (req, res) => {
+  const bid = req.user.branch_id;
+  const targetUserId = req.params.id;
+
+  // Lấy thông tin user cần thao tác kèm role code
+  const [[targetUser]] = await pool.execute(
+    `SELECT u.is_active, u.role_id, r.code AS role_code 
+     FROM users u 
+     JOIN roles r ON r.id = u.role_id
+     WHERE u.id = ? AND u.branch_id = ? AND u.is_deleted = 0`,
+    [targetUserId, bid]
+  );
+
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Không tìm thấy nhân viên hoặc nhân viên không thuộc chi nhánh này' });
+  }
+
+  // Không cho phép tự khóa/mở khóa chính mình
+  if (Number(targetUserId) === req.user.id) {
+    return res.status(400).json({ error: 'Bạn không thể tự thay đổi trạng thái tài khoản của chính mình' });
+  }
+
+  // Không cho phép khóa/mở khóa tài khoản của Quản lý chi nhánh khác (role BRANCH_MANAGER)
+  if (targetUser.role_code === 'BRANCH_MANAGER') {
+    return res.status(403).json({ error: 'Bạn không có quyền khóa/mở khóa tài khoản của Quản lý chi nhánh khác' });
+  }
+
+  // Đảo ngược trạng thái
+  const newStatus = targetUser.is_active ? 0 : 1;
+  await pool.execute(`UPDATE users SET is_active = ? WHERE id = ?`, [newStatus, targetUserId]);
+
+  // Ghi log audit
+  await logAudit(req.user.id, 'TOGGLE_STAFF_STATUS', 'branch', { targetUserId, newStatus }, req.ip);
+
+  res.json({ 
+    ok: true, 
+    is_active: newStatus, 
+    message: newStatus ? 'Đã mở khóa tài khoản thành công' : 'Đã khóa tài khoản thành công' 
+  });
+}));
+
+  // ...
 // =========================================================
 // LẤY DANH SÁCH HÀNG ĐANG VẬN CHUYỂN TỚI CHI NHÁNH
 // =========================================================
@@ -889,56 +1152,5 @@ setInterval(async () => {
 // BACKGROUND JOB: UC-36 TỰ ĐỘNG GỌI SHIPPER
 // ==========================================
 // Chạy ngầm mỗi 30 giây để quét các đơn đang nấu và tính toán gọi xe
-setInterval(async () => {
-  try {
-    // 1. Lấy các đơn đang ở trạng thái nấu mà CHƯA có mã chuyến vận chuyển
-    const [orders] = await pool.execute(
-      `SELECT o.id, o.branch_id, o.kitchen_started_at
-       FROM orders o
-       LEFT JOIN delivery_tracking dt ON o.id = dt.order_id
-       WHERE o.status = 'COOKING' AND dt.external_shipment_id IS NULL`
-    );
-
-    for (const order of orders) {
-      // 2. Lấy thời gian chuẩn bị (prep_time) của từng món trong đơn
-      const [items] = await pool.execute(
-        `SELECT oi.cook_status, p.prep_time_minutes
-         FROM order_items oi
-         JOIN products p ON p.id = oi.product_id
-         WHERE oi.order_id = ?`, [order.id]
-      );
-
-      let maxRemaining = 0;
-      let allReady = true;
-
-      // 3. Tính toán xem món nào tốn thời gian nấu lâu nhất
-      for (const it of items) {
-        if (it.cook_status !== 'READY') {
-          allReady = false;
-          const elapsed = order.kitchen_started_at ? Math.max(0, (Date.now() - new Date(order.kitchen_started_at).getTime()) / 60000) : 0;
-          const remain = Math.max(0, Number(it.prep_time_minutes) - elapsed);
-          if (remain > maxRemaining) maxRemaining = remain;
-        }
-      }
-
-      // 4. Nếu thời gian nấu còn lại <= 5 phút (Lead time dự kiến shipper di chuyển tới) hoặc tất cả đã nấu xong
-      const LEAD_TIME = 5; 
-      if (allReady || maxRemaining <= LEAD_TIME) {
-        // Giả lập gọi API đối tác vận chuyển (UC-41)
-        const shipId = 'AUTO-SHIP-' + Date.now();
-        
-        // Tạo tracking và tự động chuyển trạng thái để báo hiệu đang tìm tài xế
-        await pool.execute(
-          `INSERT INTO delivery_tracking (order_id, external_shipment_id, status)
-           VALUES (?, ?, 'LOOKING_FOR_DRIVER')`, [order.id, shipId]
-        );
-        
-        console.log(`[UC-36] Đã tự động gọi Shipper cho đơn ${order.id}. Khớp ETA chuẩn!`);
-      }
-    }
-  } catch (e) {
-    console.error('[UC-36 Cron Error]', e);
-  }
-}, 30000);
 
 module.exports = router;

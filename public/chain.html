@@ -84,8 +84,8 @@
         </div>
         <div><label for="ni_rate">Tỷ lệ (1 ĐV Nhập = ? ĐV Cơ bản)</label><input id="ni_rate" type="number" value="1" step="0.0001" /></div>
         <div><label for="ni_cost">Giá nhập (theo ĐV Nhập)</label><input id="ni_cost" type="number" value="0" /></div>
-        <div><label for="ni_min">Tồn an toàn (theo ĐV CB)</label><input id="ni_min" type="number" value="0" /></div>
-        <div><label for="ni_reord">Điểm đặt hàng (theo ĐV CB)</label><input id="ni_reord" type="number" value="0" /></div>
+        <div><label for="ni_min">Tồn AT (ĐV Nhập)</label><input id="ni_min" type="number" min="0" value="0" /></div>
+        <div><label for="ni_reord">Điểm đặt (ĐV Nhập)</label><input id="ni_reord" type="number" min="0" value="0" /></div>
       </div>
       <div class="row-actions"><button id="addIng">Tạo nguyên liệu</button></div>
     </div>
@@ -310,7 +310,9 @@ async function editProduct(id) {
   showModal('<h3>✏️ Sửa sản phẩm #' + product.id + '</h3>' +
     '<label for="ep_name">Tên</label><input id="ep_name" value="' + escapeHtml(product.name) + '" />' +
     '<label for="ep_desc">Mô tả</label><textarea id="ep_desc" rows="2">' + escapeHtml(product.description || '') + '</textarea>' +
-    '<div class="grid grid-2"><div><label for="ep_price">Giá cơ bản</label><input id="ep_price" type="number" value="' + product.base_price + '" /></div>' +
+    '<div class="grid grid-2">' +
+    // Đoạn sửa giá cơ bản: Dùng Math.round() để bỏ phần thập phân .00
+    '<div><label for="ep_price">Giá cơ bản</label><input id="ep_price" type="number" value="' + Math.round(product.base_price) + '" /></div>' +
     '<div><label for="ep_prep">Thời gian chế biến</label><input id="ep_prep" type="number" value="' + product.prep_time_minutes + '" /></div></div>' +
     '<label for="ep_img">Ảnh URL</label><input id="ep_img" type="url" value="' + escapeHtml(product.image_url || '') + '" />' +
     '<div class="row-actions" style="margin-top:1rem;justify-content:flex-end">' +
@@ -356,19 +358,23 @@ function renderIngs() {
   const list = search ? ings.filter(i => i.name.toLowerCase().includes(search)) : ings;
   document.getElementById('ings').innerHTML = list.length
     ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Tên</th><th>ĐV Cơ bản</th><th>ĐV Nhập</th><th>Tỷ lệ</th><th>Giá nhập</th><th>Tồn AT</th><th></th></tr></thead><tbody>' +
-      list.map(i => `<tr>
+      list.map(i => {
+        const rate = Number(i.conversion_rate) || 1;
+        // Chia tỷ lệ để hiển thị ĐV Nhập
+        const min_purchase = Math.floor(Number(i.safety_stock_min) / rate);
+        return `<tr>
         <td>${i.id}</td>
         <td><strong>${escapeHtml(i.name)}</strong></td>
         <td>${escapeHtml(i.unit)}</td>
         <td>${escapeHtml(i.purchase_unit || '-')}</td>
-        <td>${Number(i.conversion_rate).toString()}</td>
-        <td>${vnd(Number(i.unit_cost) * Number(i.conversion_rate || 1))}</td>
-        <td>${fmtNum(i.safety_stock_min)}</td>
+        <td>${rate.toString()}</td>
+        <td>${vnd(Number(i.unit_cost) * rate)}</td>
+        <td>${min_purchase.toLocaleString('vi-VN')} ${escapeHtml(i.purchase_unit || i.unit)}</td>
         <td>
           <button class="secondary" onclick="editIng(${i.id})" style="padding:0.2rem 0.5rem">✏️</button>
           <button class="secondary" onclick="deleteIng(${i.id})" style="padding:0.2rem 0.5rem">🗑️</button>
         </td>
-      </tr>`).join('') + '</tbody></table></div>'
+      </tr>`}).join('') + '</tbody></table></div>'
     : '<p class="empty">Không có nguyên liệu phù hợp</p>';
 }
 
@@ -462,8 +468,10 @@ document.getElementById('addIng').onclick = async () => {
   const purchase_unit = document.getElementById('ni_punit').value.trim();
   const conversion_rate = Number(document.getElementById('ni_rate').value);
   const cost = Number(document.getElementById('ni_cost').value);
-  const min = Number(document.getElementById('ni_min').value);
-  const reord = Number(document.getElementById('ni_reord').value);
+  
+  // Nhân với tỷ lệ để gửi về server lưu thành ĐV BOM
+  const min = Number(document.getElementById('ni_min').value) * conversion_rate;
+  const reord = Number(document.getElementById('ni_reord').value) * conversion_rate;
 
   if (!name || !unit) return showMsg('<div class="msg err">Vui lòng nhập tên và ĐV cơ bản</div>');
   if (conversion_rate <= 0) return showMsg('<div class="msg err">Tỷ lệ quy đổi phải > 0</div>');
@@ -479,6 +487,8 @@ document.getElementById('addIng').onclick = async () => {
     ['ni_name','ni_unit', 'ni_punit'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('ni_rate').value = "1";
     document.getElementById('ni_cost').value = "0"; 
+    document.getElementById('ni_min').value = "0"; 
+    document.getElementById('ni_reord').value = "0"; 
     loadIngs();
   } catch (e) { showMsg('<div class="msg err">' + escapeHtml(e.message) + '</div>'); }
 };
@@ -588,22 +598,27 @@ window.deleteCat = async function(id) {
 };
 
 // --- 5. EDIT/DELETE INGREDIENT ---
+
 window.editIng = function(id) {
   const ing = ings.find(i => i.id === id);
-  let purchaseCost = Number(ing.unit_cost || 0) * Number(ing.conversion_rate || 1);
-  purchaseCost = Math.round(purchaseCost); // Làm tròn thành số nguyên VND
-  
+  const rate = Number(ing.conversion_rate || 1);
+  let purchaseCost = Number(ing.unit_cost || 0) * rate;
+  purchaseCost = Math.round(purchaseCost); 
+
+  // Hiển thị ra Modal bằng ĐV Nhập
+  const min_purchase = Math.floor(Number(ing.safety_stock_min) / rate);
+  const reord_purchase = Math.floor(Number(ing.reorder_point) / rate);
+
   showModal(`<h3>✏️ Sửa nguyên liệu #${id}</h3>
     <label>Tên</label><input id="ei_name" value="${escapeHtml(ing.name)}" />
     <div class="grid grid-2">
       <div><label>ĐV Cơ bản</label><input id="ei_unit" value="${escapeHtml(ing.unit)}" /></div>
       <div><label>ĐV Nhập</label><input id="ei_punit" value="${escapeHtml(ing.purchase_unit || '')}" /></div>
-      <div><label>Tỷ lệ quy đổi</label><input id="ei_rate" type="number" step="0.0001" value="${Number(ing.conversion_rate || 1)}" /></div>
-      
+      <div><label>Tỷ lệ quy đổi</label><input id="ei_rate" type="number" step="0.0001" value="${rate}" /></div>
       <div><label>Giá nhập (ĐV Nhập)</label><input id="ei_cost" type="text" value="${fmtNum(purchaseCost)}" oninput="let v = this.value.replace(/[^0-9]/g, ''); this.value = v ? Number(v).toLocaleString('vi-VN') : '';" /></div>
       
-      <div><label>Tồn an toàn (ĐV CB)</label><input id="ei_min" type="number" step="0.001" value="${Number(ing.safety_stock_min)}" /></div>
-      <div><label>Điểm đặt (ĐV CB)</label><input id="ei_reord" type="number" step="0.001" value="${Number(ing.reorder_point)}" /></div>
+      <div><label>Tồn an toàn (ĐV Nhập)</label><input id="ei_min" type="number" min="0" value="${min_purchase}" /></div>
+      <div><label>Điểm đặt (ĐV Nhập)</label><input id="ei_reord" type="number" min="0" value="${reord_purchase}" /></div>
     </div>
     <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
       <button class="secondary" onclick="closeModal()">Hủy</button>
@@ -615,9 +630,12 @@ window.saveIng = async function(id) {
   const name = document.getElementById('ei_name').value.trim();
   const rate = Number(document.getElementById('ei_rate').value);
   
-  // Xóa mọi dấu chấm trước khi chuyển thành Number
   const rawCostStr = document.getElementById('ei_cost').value.replace(/\./g, '');
   const cost = Number(rawCostStr);
+
+  // Nhân với tỷ lệ để gửi về DB
+  const min = Number(document.getElementById('ei_min').value) * rate;
+  const reord = Number(document.getElementById('ei_reord').value) * rate;
 
   if (!name) return alertModal('Tên nguyên liệu không được để trống');
   if (rate <= 0) return alertModal('Tỷ lệ quy đổi phải lớn hơn 0');
@@ -628,10 +646,10 @@ window.saveIng = async function(id) {
       name: document.getElementById('ei_name').value.trim(),
       unit: document.getElementById('ei_unit').value.trim(),
       purchase_unit: document.getElementById('ei_punit').value.trim(),
-      conversion_rate: Number(document.getElementById('ei_rate').value),
-      purchase_price_input: cost, // Sử dụng biến cost đã được parse sạch sẽ ở trên
-      safety_stock_min: Number(document.getElementById('ei_min').value),
-      reorder_point: Number(document.getElementById('ei_reord').value)
+      conversion_rate: rate,
+      purchase_price_input: cost, 
+      safety_stock_min: min,
+      reorder_point: reord
     }});
     closeModal(); loadIngs(); showMsg('<div class="msg ok">✓ Đã cập nhật nguyên liệu</div>');
   } catch (e) { alertModal(e.message); }
@@ -853,14 +871,25 @@ async function loadAdjustments() {
 window.reviewAdj = async function(id) {
   try {
     const { adjustment, lines } = await api('/chain/inventory-adjustments/' + id);
-    const linesHtml = lines.map(l => `<tr>
-      <td>${escapeHtml(l.ingredient_name)}</td>
-      <td>${l.qty_before} ${l.unit}</td>
-      <td>${l.qty_after} ${l.unit}</td>
-      <td style="color:${l.delta < 0 ? 'var(--danger)' : 'var(--success)'}; font-weight:bold;">
-        ${l.delta > 0 ? '+' : ''}${l.delta} ${l.unit}
-      </td>
-    </tr>`).join('');
+    
+    const linesHtml = lines.map(l => {
+      const rate = Number(l.conversion_rate) || 1;
+      const unitLabel = l.purchase_unit || l.unit;
+      
+      // Làm tròn xuống để lấy số kiện hàng nguyên vẹn (Đơn vị nhập)
+      const qtyBefore = Math.floor(Number(l.qty_before) / rate);
+      const qtyAfter = Math.floor(Number(l.qty_after) / rate);
+      const delta = qtyAfter - qtyBefore;
+
+      return `<tr>
+        <td>${escapeHtml(l.ingredient_name)}</td>
+        <td>${qtyBefore.toLocaleString('vi-VN')} ${unitLabel}</td>
+        <td>${qtyAfter.toLocaleString('vi-VN')} ${unitLabel}</td>
+        <td style="color:${delta < 0 ? 'var(--danger)' : 'var(--success)'}; font-weight:bold;">
+          ${delta > 0 ? '+' : ''}${delta.toLocaleString('vi-VN')} ${unitLabel}
+        </td>
+      </tr>`;
+    }).join('');
 
     showModal(`<h3>Chi tiết phiếu kiểm kê #${id} - ${escapeHtml(adjustment.branch_name)}</h3>
       <p><strong>Lý do chi nhánh nhập:</strong> ${escapeHtml(adjustment.reason || '-')}</p>

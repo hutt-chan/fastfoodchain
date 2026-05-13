@@ -151,6 +151,10 @@ document.querySelectorAll('.tabs button').forEach(b => {
     if (b.dataset.tab === 'sup') loadSuppliers();
     if (b.dataset.tab === 'thr') loadThr();
     if (b.dataset.tab === 'adj') loadAdj();
+    if (b.dataset.tab === 'po') {
+        loadPos(); 
+        loadSuppliers(); // Load cả danh sách NCC để chọn trong form tạo PO [cite: 38]
+    }
   };
 });
 
@@ -176,17 +180,28 @@ function renderInv() {
   if (filt === 'reord') list = list.filter(i => { const q = Number(i.quantity); return q >= Number(i.safety_stock_min) && q < Number(i.reorder_point); });
   
   document.getElementById('inv').innerHTML = list.length
-    ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn</th><th>An toàn</th><th>Điểm đặt</th><th>Trạng thái</th></tr></thead><tbody>' +
+    ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn (ĐV sử dụng)</th><th>Tồn (ĐV nhập)</th><th>An toàn</th><th>Điểm đặt</th><th>Trạng thái</th></tr></thead><tbody>' +
       list.map(i => {
-        const q = Number(i.quantity); let badge;
+        const q = Number(i.quantity);
+        const rate = Number(i.conversion_rate) || 1;
+        
+        // Quy đổi ra ĐV Nhập
+        const purchaseQty = Math.floor(q / rate); 
+        const minPurchase = Math.floor(Number(i.safety_stock_min) / rate);
+        const reordPurchase = Math.floor(Number(i.reorder_point) / rate);
+        const purchaseUnit = i.purchase_unit || i.unit;
+        
+        let badge;
         if (q < Number(i.safety_stock_min)) badge = '<span class="badge" style="background:var(--danger-bg);color:var(--danger)">Dưới an toàn</span>';
         else if (q < Number(i.reorder_point)) badge = '<span class="badge warn">Cần đặt thêm</span>';
         else badge = '<span class="badge ok">Đủ</span>';
+        
         return `<tr>
-          <td>${escapeHtml(i.name)}</td>
-          <td>${fmtNum(q)} ${escapeHtml(i.unit)}</td>
-          <td>${fmtNum(i.safety_stock_min)}</td>
-          <td>${fmtNum(i.reorder_point)}</td>
+          <td><strong>${escapeHtml(i.name)}</strong></td>
+          <td>${fmtNum(q)} <span class="tag">${escapeHtml(i.unit)}</span></td>
+          <td style="color: var(--primary)"><strong>${fmtNum(purchaseQty)}</strong> <span class="tag">${escapeHtml(purchaseUnit)}</span></td>
+          <td>${fmtNum(minPurchase)} <span class="tag">${escapeHtml(purchaseUnit)}</span></td>
+          <td>${fmtNum(reordPurchase)} <span class="tag">${escapeHtml(purchaseUnit)}</span></td>
           <td>${badge}</td>
         </tr>`;
       }).join('') + '</tbody></table></div>'
@@ -238,13 +253,19 @@ async function openDetail(id) {
   const canApprove = ['NEEDS_MANUAL', 'NEW'].includes(request.status);
   
   const rows = lines.map(l => {
+    const rate = Number(l.conversion_rate) || 1;
+    const reqQtyPurchase = Math.floor(Number(l.qty_requested) / rate);
+    const appQtyPurchase = l.qty_approved !== null ? Math.floor(Number(l.qty_approved) / rate) : 0;
+    const unitLabel = l.purchase_unit || l.unit;
+
     const qtyDisp = canApprove 
-      ? `<input type="number" data-line="${l.ingredient_id}" value="${Number(l.qty_requested)}" min="0" style="width:80px"/>`
-      : `<strong>${fmtNum(l.qty_approved || 0)}</strong>`;
+      ? `<input type="number" data-line="${l.ingredient_id}" data-rate="${rate}" value="${reqQtyPurchase}" min="0" style="width:80px"/>`
+      : `<strong>${fmtNum(appQtyPurchase)}</strong>`;
+      
     return `<tr>
       <td>${escapeHtml(l.name)}</td>
-      <td>${fmtNum(l.qty_requested)}</td>
-      <td>${qtyDisp}</td>
+      <td>${fmtNum(reqQtyPurchase)} ${escapeHtml(unitLabel)}</td>
+      <td>${qtyDisp} ${canApprove ? escapeHtml(unitLabel) : ''}</td>
     </tr>`;
 }).join('');
 
@@ -253,7 +274,7 @@ async function openDetail(id) {
     ${request.reject_reason ? `<p class="msg err" style="margin-bottom:1rem">Lý do từ chối: ${escapeHtml(request.reject_reason)}</p>` : ''}
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nguyên liệu</th><th>Chi nhánh xin</th><th>Quyết định Duyệt</th></tr></thead>
+        <thead><tr><th>Nguyên liệu</th><th>Chi nhánh xin (ĐV Nhập)</th><th>Quyết định Duyệt</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -267,7 +288,13 @@ document.getElementById('reqFilter').addEventListener('change', loadRequests);
 
 window.approveDetail = async function(id) {
   const lines = [];
-  document.querySelectorAll('[data-line]').forEach(i => lines.push({ ingredient_id: Number(i.dataset.line), qty_approved: Number(i.value) }));
+  document.querySelectorAll('[data-line]').forEach(i => {
+    const rate = Number(i.dataset.rate) || 1;
+    // Nhân lại với tỷ lệ để gửi đơn vị BOM về Backend
+    const qtyBom = Number(i.value) * rate;
+    lines.push({ ingredient_id: Number(i.dataset.line), qty_approved: qtyBom });
+  });
+  
   try {
     const r = await api('/warehouse/stock-requests/' + id + '/resolve', { method:'POST', body:{ approve: true, lines } });
     closeModal();
@@ -305,7 +332,13 @@ async function loadOutbounds() {
 
 async function viewObDetail(id) {
   const { outbound, lines } = await api('/warehouse/outbounds/' + id);
-  const rows = lines.map(l => `<tr><td>${escapeHtml(l.name)}</td><td>${fmtNum(l.quantity)} ${escapeHtml(l.unit)}</td></tr>`).join('');
+  const rows = lines.map(l => {
+    const rate = Number(l.conversion_rate) || 1;
+    const outQtyPurchase = Math.floor(Number(l.quantity) / rate);
+    const unitLabel = l.purchase_unit || l.unit;
+    
+    return `<tr><td>${escapeHtml(l.name)}</td><td>${fmtNum(outQtyPurchase)} ${escapeHtml(unitLabel)}</td></tr>`;
+  }).join('');
   
   showModal(`<h3>Chi tiết phiếu xuất: ${outbound.code}</h3>
     <div class="kpi-grid" style="margin-bottom:1rem">
@@ -313,7 +346,7 @@ async function viewObDetail(id) {
       <div class="kpi"><div class="l">Trạng thái</div><div class="v" style="font-size:1rem">${outbound.status}</div></div>
       ${outbound.trip_code ? `<div class="kpi"><div class="l">Chuyến xe</div><div class="v" style="font-size:1rem">${outbound.trip_code}</div></div>` : ''}
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Số lượng thực xuất</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Số lượng thực xuất (ĐV Nhập)</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
       <button class="secondary" onclick="closeModal()">Đóng</button>
     </div>`);
@@ -422,36 +455,65 @@ document.getElementById('addPoLine').onclick = () => {
   div.innerHTML = `
   <select data-ing style="flex:2" onchange="updatePoPriceAndUnit(this)">
     <option value="">-- Chọn nguyên liệu --</option>
-    ${ingredients.map(i => `<option value="${i.id}" data-unit="${escapeHtml(i.purchase_unit || i.unit)}" data-price="${i.unit_cost * i.conversion_rate}">${escapeHtml(i.name)}</option>`).join('')}
+    ${ingredients.map(i => {
+      // Tính giá hệ thống = giá vốn * tỷ lệ quy đổi đơn vị mua
+      const expectedPrice = Number(i.unit_cost || 0) * Number(i.conversion_rate || 1);
+      return `<option value="${i.id}" data-unit="${escapeHtml(i.purchase_unit || i.unit)}" data-price="${expectedPrice}">${escapeHtml(i.name)}</option>`;
+    }).join('')}
   </select>
   <span class="tag" style="min-width:40px" data-unit-display></span>
-  <input type="number" data-qty style="flex:1" placeholder="SL" value="1">
-  <input type="number" data-price style="flex:1" placeholder="Giá">
+  <input type="number" data-qty style="flex:1" placeholder="SL" value="1" min="1" title="Số lượng đặt">
+  
+  <input type="number" data-price style="flex:1" placeholder="Giá thực tế" min="0" title="Đơn giá thực tế nhập từ NCC">
+  
+  <input type="text" data-expected-price style="flex:1; background-color: #f9f9f9; color: #888; cursor: not-allowed; border: 1px dashed #ccc;" placeholder="Giá dự tính" title="Giá dự tính (hệ thống)" readonly>
+  
   <button class="secondary" onclick="this.parentElement.remove()">✕</button>
-`;
+  `;
   el.appendChild(div);
 };
+
 // Khi chọn nguyên liệu, tự động cập nhật đơn vị hiển thị và giá đề xuất dựa trên dữ liệu đã lưu
 window.updatePoPriceAndUnit = function(sel) {
   const opt = sel.options[sel.selectedIndex];
-  const price = opt.dataset.price || 0;
+  const price = Number(opt.dataset.price || 0);
   const unit = opt.dataset.unit || '';
   const parent = sel.parentElement;
-  parent.querySelector('[data-price]').value = price;
+  
+  const priceInput = parent.querySelector('[data-price]');
+  const expectedPriceInput = parent.querySelector('[data-expected-price]');
+  
+  // Mồi sẵn giá vào ô thực tế để người dùng đỡ phải gõ, nhưng vẫn cho phép sửa lại
+  priceInput.value = price > 0 ? price : '';
+  
+  // Hiển thị giá dự tính lên ô chỉ đọc để người dùng dễ dàng so sánh
+  expectedPriceInput.value = price > 0 ? price.toLocaleString('vi-VN') + ' đ' : 'Chưa có giá';
+  
   parent.querySelector('[data-unit-display]').textContent = unit;
 };
 
 document.getElementById('createPo').onclick = async () => {
   const lines = [];
-  document.querySelectorAll('[data-pol]').forEach(d => lines.push({
-    ingredient_id: Number(d.querySelector('[data-ing]').value),
-    qty_ordered: Number(d.querySelector('[data-qty]').value),
-    unit_price: Number(d.querySelector('[data-price]').value),
-  }));
-  if (!lines.length) return alertModal('Cần ít nhất 1 dòng');
+  document.querySelectorAll('[data-pol]').forEach(d => {
+    const ingId = Number(d.querySelector('[data-ing]').value);
+    if (!ingId) return; // Bỏ qua nếu dòng chưa chọn nguyên liệu
+    
+    lines.push({
+      ingredient_id: ingId,
+      qty_ordered: Number(d.querySelector('[data-qty]').value),
+      // Lấy giá trị trực tiếp từ input do người dùng nhập/chỉnh sửa
+      unit_price: Number(d.querySelector('[data-price]').value || 0),
+    });
+  });
+  
+  if (!lines.length) return alertModal('Cần ít nhất 1 dòng nguyên liệu hợp lệ');
   if (!await confirmModal('Tạo PO ' + lines.length + ' dòng?')) return;
+  
   try {
-    const r = await api('/warehouse/purchase-orders', { method:'POST', body:{ supplier_id: Number(document.getElementById('po_sup').value), lines } });
+    const r = await api('/warehouse/purchase-orders', { 
+      method:'POST', 
+      body:{ supplier_id: Number(document.getElementById('po_sup').value), lines } 
+    });
     await alertModal('Đã tạo PO #' + r.id + ' — tổng: ' + vnd(r.total));
     document.getElementById('poLines').innerHTML = '<p class="tag">Bấm "+ Dòng nguyên liệu" để bắt đầu.</p>';
     loadPos();
@@ -459,48 +521,28 @@ document.getElementById('createPo').onclick = async () => {
 };
 
 async function loadPos() {
+  // Gọi API vừa thêm ở Bước 1
   const { purchase_orders } = await api('/warehouse/purchase-orders');
   
-  document.getElementById('poList').innerHTML = purchase_orders.length
-    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Ngày đặt</th><th>NCC</th><th>Tổng</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>' +
+  const container = document.getElementById('poList');
+  container.innerHTML = purchase_orders.length
+    ? '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Ngày đặt</th><th>NCC</th><th>Tổng tiền</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>' +
       purchase_orders.map(p => `<tr>
         <td><strong>#${p.id}</strong></td>
         <td>${formatDateTime(p.created_at)}</td>
         <td>${escapeHtml(p.supplier_name)}</td>
-        <td>${vnd(p.total_amount)}</td>
+        <td>${vnd(p.total_amount)}</td> 
         <td><span class="badge ${p.status === 'RECEIVED' ? 'ok' : 'warn'}">${p.status}</span></td>
         <td>
-          <button class="secondary" onclick="viewPoDetail(${p.id})" style="padding:0.25rem 0.5rem"> Xem chi tiết </button>
-          ${p.status !== 'RECEIVED' ? `<button data-recv="${p.id}" style="padding:0.25rem 0.5rem; margin-left:0.5rem">📥 Nhập kho</button>` : ''}
+          <button class="secondary" onclick="viewPoDetail(${p.id})">Chi tiết</button>
+          ${p.status !== 'RECEIVED' ? `<button class="primary" data-recv="${p.id}" style="margin-left:0.5rem">📥 Nhập kho</button>` : ''}
         </td>
-      </tr>`).join('') +
-      '</tbody></table></div>'
-    : '<p class="tag">Chưa có phiếu đặt mua (PO) nào</p>';
-    
-  document.querySelectorAll('[data-recv]').forEach(b => b.onclick = async () => {
-    const { purchase_order, lines } = await api('/warehouse/purchase-orders/' + b.dataset.recv);
-    
-    const rows = lines.map(l => {
-      const unit = l.purchase_unit || l.unit; 
-      // Lấy ngày mai làm mặc định cho HSD để người dùng đỡ phải gõ nhiều nếu hàng ngắn ngày
-      const defaultExp = new Date(); defaultExp.setDate(defaultExp.getDate() + 1);
-      const strExp = defaultExp.toISOString().split('T')[0];
+      </tr>`).join('') + '</tbody></table></div>'
+    : '<p class="empty">Chưa có đơn đặt mua nào.</p>';
 
-      return `<tr>
-        <td>${escapeHtml(l.name)}</td>
-        <td>${fmtNum(l.qty_ordered)} ${escapeHtml(unit)}</td>
-        <td><input type="number" data-line="${l.ingredient_id}" value="${Number(l.qty_ordered)}" min="0" style="width:80px"/></td>
-        <td><input type="date" data-exp="${l.ingredient_id}" value="${strExp}" style="width:130px" required /></td>
-      </tr>`;
-    }).join('');
-    
-    showModal(`<h3>📥 Nhập kho PO #${purchase_order.id}</h3>
-      <p class="msg ok">Hệ thống áp dụng FEFO. Vui lòng nhập chính xác <b>Hạn sử dụng</b> của lô hàng này.</p>
-      <div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Đặt</th><th>Thực nhận</th><th>Hạn sử dụng</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
-        <button class="secondary" onclick="closeModal()">Hủy</button>
-        <button onclick="recvPo(${purchase_order.id})">✓ Xác nhận nhập</button>
-      </div>`);  
+  // Gán lại sự kiện cho các nút Nhập kho vừa render
+  container.querySelectorAll('[data-recv]').forEach(btn => {
+    btn.onclick = () => openRecvModal(btn.dataset.recv); // Bạn nên tách logic mở modal nhập kho ra hàm riêng
   });
 }
 
@@ -544,6 +586,55 @@ window.viewPoDetail = async function(id) {
   }
 };
 
+window.openRecvModal = async function(id) {
+  try {
+    const { purchase_order, lines } = await api('/warehouse/purchase-orders/' + id);
+    
+    // Lọc ra các nguyên liệu chưa nhận đủ số lượng
+    const pendingLines = lines.filter(l => Number(l.qty_received || 0) < Number(l.qty_ordered));
+    
+    if (pendingLines.length === 0) {
+      return alertModal('Đơn hàng này đã nhận đủ số lượng!');
+    }
+
+    const rows = pendingLines.map(l => {
+      const unit = l.purchase_unit || l.unit;
+      const ordered = Number(l.qty_ordered);
+      const received = Number(l.qty_received || 0);
+      const remaining = ordered - received; // Gợi ý nhập nốt số còn thiếu
+      
+      return `<tr>
+        <td>${escapeHtml(l.name)}</td>
+        <td>${fmtNum(ordered)} ${escapeHtml(unit)}</td>
+        <td>${fmtNum(received)} ${escapeHtml(unit)}</td>
+        <td>
+          <input type="number" data-line="${l.ingredient_id}" value="${remaining}" min="0" max="${remaining}" style="width:80px">
+        </td>
+        <td>
+          <input type="date" data-exp="${l.ingredient_id}" required title="Bắt buộc nhập Hạn sử dụng để quản lý FEFO">
+        </td>
+      </tr>`;
+    }).join('');
+
+    showModal(`<h3>📥 Nhập kho PO #${purchase_order.id}</h3>
+      <p class="tag" style="margin-bottom: 1rem">Nhà cung cấp: <strong>${escapeHtml(purchase_order.supplier_name)}</strong></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Nguyên liệu</th><th>SL Đặt</th><th>Đã Nhận</th><th>Nhận Đợt Này</th><th>Hạn Sử Dụng (FEFO)</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="row-actions" style="margin-top:1rem;justify-content:flex-end">
+        <button class="secondary" onclick="closeModal()">Hủy</button>
+        <button class="primary" onclick="recvPo(${id})">✓ Xác nhận Nhập Kho</button>
+      </div>`);
+  } catch (e) {
+    alertModal(e.message);
+  }
+};
+
 window.recvPo = async function(id) {
   const lines = [];
   document.querySelectorAll('[data-line]').forEach(i => {
@@ -567,18 +658,30 @@ window.recvPo = async function(id) {
 };
 
 async function loadThr() {
-  document.getElementById('thrTable').innerHTML = '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>An toàn</th><th>Điểm đặt</th><th></th></tr></thead><tbody>' +
-    ingredients.map(i => '<tr><td>' + escapeHtml(i.name) + ' (' + escapeHtml(i.unit) + ')</td>' +
-      '<td><input type="number" data-min="' + i.id + '" value="' + Number(i.safety_stock_min) + '" style="width:120px" /></td>' +
-      '<td><input type="number" data-reord="' + i.id + '" value="' + Number(i.reorder_point) + '" style="width:120px" /></td>' +
-      '<td><button class="secondary" data-savet="' + i.id + '" style="padding:0.25rem 0.55rem">💾 Lưu</button></td></tr>').join('') +
-    '</tbody></table></div>';
+  document.getElementById('thrTable').innerHTML = '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>An toàn (ĐV Nhập)</th><th>Điểm đặt (ĐV Nhập)</th><th></th></tr></thead><tbody>' +
+    ingredients.map(i => {
+      const rate = Number(i.conversion_rate) || 1;
+      const min_purchase = Math.floor(Number(i.safety_stock_min) / rate);
+      const reord_purchase = Math.floor(Number(i.reorder_point) / rate);
+      const unitLabel = i.purchase_unit || i.unit;
+      
+      return `<tr>
+        <td>${escapeHtml(i.name)} (${escapeHtml(unitLabel)})</td>
+        <td><input type="number" data-min="${i.id}" data-rate="${rate}" value="${min_purchase}" style="width:120px" min="0" /></td>
+        <td><input type="number" data-reord="${i.id}" data-rate="${rate}" value="${reord_purchase}" style="width:120px" min="0" /></td>
+        <td><button class="secondary" data-savet="${i.id}" style="padding:0.25rem 0.55rem">💾 Lưu</button></td>
+      </tr>`;
+    }).join('') + '</tbody></table></div>';
     
   document.querySelectorAll('[data-savet]').forEach(b => b.onclick = async () => {
     const id = b.dataset.savet;
+    const rate = Number(document.querySelector(`[data-min="${id}"]`).dataset.rate) || 1;
+    const min_purchase = Number(document.querySelector(`[data-min="${id}"]`).value);
+    const reord_purchase = Number(document.querySelector(`[data-reord="${id}"]`).value);
+    
     await api('/warehouse/ingredients/' + id + '/thresholds', { method:'PATCH', body:{
-      safety_stock_min: Number(document.querySelector('[data-min="' + id + '"]').value),
-      reorder_point: Number(document.querySelector('[data-reord="' + id + '"]').value),
+      safety_stock_min: min_purchase * rate,
+      reorder_point: reord_purchase * rate,
     }});
     showMsg('<div class="msg ok">✓ Đã lưu</div>'); loadInv();
   });
@@ -587,19 +690,25 @@ async function loadThr() {
 // ==========================================
 // LOGIC KIỂM KÊ (UC-22)
 // ==========================================
+
 function loadAdj() {
   document.getElementById('adjTable').innerHTML = allInv.length
     ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn hệ thống</th><th>Thực tế đếm được</th><th>Lý do (nếu lệch)</th></tr></thead><tbody>' +
-      allInv.map(i => `<tr>
-        <td>${escapeHtml(i.name)}</td>
-        <td><strong>${fmtNum(i.quantity)}</strong> ${escapeHtml(i.unit)}</td>
+      allInv.map(i => {
+        const rate = Number(i.conversion_rate) || 1;
+        const sysQtyPurchase = Math.floor(Number(i.quantity) / rate);
+        const unitLabel = i.purchase_unit || i.unit;
+        
+        return `<tr>
+        <td>${escapeHtml(i.name)} (${escapeHtml(unitLabel)})</td>
+        <td><strong>${fmtNum(sysQtyPurchase)}</strong></td>
         <td>
-          <input type="number" data-adj-id="${i.ingredient_id}" data-sys-qty="${Number(i.quantity)}" value="${Number(i.quantity)}" style="width:120px" min="0" oninput="checkAdjDiff(this)">
+          <input type="number" data-adj-id="${i.ingredient_id}" data-sys-qty="${sysQtyPurchase}" data-rate="${rate}" value="${sysQtyPurchase}" style="width:120px" min="0" oninput="checkAdjDiff(this)">
         </td>
         <td>
           <input type="text" data-adj-reason="${i.ingredient_id}" placeholder="Vd: Hư hỏng, đếm sai..." style="display:none; width: 100%">
         </td>
-      </tr>`).join('') + '</tbody></table></div>'
+      </tr>`}).join('') + '</tbody></table></div>'
     : '<p class="tag">Chưa có dữ liệu tồn kho</p>';
 }
 
@@ -623,12 +732,15 @@ document.getElementById('submitAdjBtn').onclick = async () => {
   const adjustments = [];
   document.querySelectorAll('[data-adj-id]').forEach(input => {
     const id = Number(input.dataset.adjId);
-    const sysQty = Number(input.dataset.sysQty);
-    const realQty = Number(input.value);
+    const sysQtyPurchase = Number(input.dataset.sysQty);
+    const realQtyPurchase = Number(input.value);
+    const rate = Number(input.dataset.rate) || 1;
     const reason = document.querySelector(`[data-adj-reason="${id}"]`).value.trim();
 
-    if (sysQty !== realQty) {
-      adjustments.push({ ingredient_id: id, qty_counted: realQty, reason: reason || 'Điều chỉnh kiểm kê định kỳ' });
+    if (sysQtyPurchase !== realQtyPurchase) {
+      // Nhân ngược lại tỷ lệ quy đổi để gửi về DB
+      const realQtyBom = realQtyPurchase * rate; 
+      adjustments.push({ ingredient_id: id, qty_counted: realQtyBom, reason: reason || 'Điều chỉnh kiểm kê định kỳ' });
     }
   });
 
@@ -660,13 +772,24 @@ window.loadXNT = async function() {
     
     document.getElementById('xntReport').innerHTML = r.report.length
       ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn đầu kỳ</th><th>Nhập trong kỳ</th><th>Xuất trong kỳ</th><th>Tồn cuối kỳ</th></tr></thead><tbody>' +
-        r.report.map(i => `<tr>
+        r.report.map(i => {
+          const rate = Number(i.conversion_rate) || 1;
+          const unitLabel = i.purchase_unit || i.unit;
+          
+          // Dùng Math.round() để làm tròn về số nguyên (số tự nhiên) cho đẹp mắt
+          const startP = Math.round(Number(i.start_stock) / rate);
+          const inP = Math.round(Number(i.total_in) / rate);
+          const outP = Math.round(Number(i.total_out) / rate);
+          const endP = Math.round(Number(i.end_stock) / rate);
+          
+          return `<tr>
           <td><strong>${escapeHtml(i.name)}</strong></td>
-          <td>${fmtNum(i.start_stock)} <span class="tag">${escapeHtml(i.unit)}</span></td>
-          <td style="color:var(--primary)">+ ${fmtNum(i.total_in)}</td>
-          <td style="color:var(--danger)">- ${fmtNum(i.total_out)}</td>
-          <td><strong>${fmtNum(i.end_stock)}</strong> <span class="tag">${escapeHtml(i.unit)}</span></td>
-        </tr>`).join('') + '</tbody></table></div>'
+          <td>${startP.toLocaleString('vi-VN')} <span class="tag">${escapeHtml(unitLabel)}</span></td>
+          <td style="color:var(--primary)">+ ${inP.toLocaleString('vi-VN')} <span class="tag">${escapeHtml(unitLabel)}</span></td>
+          <td style="color:var(--danger)">- ${outP.toLocaleString('vi-VN')} <span class="tag">${escapeHtml(unitLabel)}</span></td>
+          <td><strong>${endP.toLocaleString('vi-VN')}</strong> <span class="tag">${escapeHtml(unitLabel)}</span></td>
+        </tr>`;
+        }).join('') + '</tbody></table></div>'
       : '<p class="empty">Không có dữ liệu</p>';
   } catch (e) { alertModal(e.message); }
 };

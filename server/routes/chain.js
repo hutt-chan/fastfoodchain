@@ -441,7 +441,8 @@ router.get('/inventory-adjustments/:id', C, async (req, res) => {
   );
   if (!adj) return res.status(404).json({ error: 'Không tìm thấy' });
   const [lines] = await pool.execute(
-    `SELECT l.*, i.name AS ingredient_name, i.unit FROM inventory_adjustment_lines l
+    `SELECT l.*, i.name AS ingredient_name, i.unit, i.purchase_unit, i.conversion_rate 
+     FROM inventory_adjustment_lines l
      JOIN ingredients i ON i.id = l.ingredient_id WHERE l.adjustment_id = ?`,
     [req.params.id]
   );

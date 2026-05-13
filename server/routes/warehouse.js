@@ -167,7 +167,8 @@ router.get('/purchase-orders/:id', W, async (req, res) => {
 
 router.get('/central-inventory', W, async (req, res) => {
   const [rows] = await pool.execute(
-    `SELECT ci.*, i.name, i.unit, i.safety_stock_min, i.reorder_point FROM central_inventory ci
+    `SELECT ci.*, i.name, i.unit, i.safety_stock_min, i.reorder_point, i.purchase_unit, i.conversion_rate 
+     FROM central_inventory ci
      JOIN ingredients i ON i.id = ci.ingredient_id ORDER BY i.name`
   );
   res.json({ inventory: rows });
@@ -244,7 +245,8 @@ router.get('/outbounds/:id', W, async (req, res) => {
   if (!ob) return res.status(404).json({ error: 'Không tìm thấy' });
   
   const [lines] = await pool.execute(
-    `SELECT sol.*, i.name, i.unit FROM stock_outbound_lines sol
+    `SELECT sol.*, i.name, i.unit, i.purchase_unit, i.conversion_rate 
+     FROM stock_outbound_lines sol
      JOIN ingredients i ON i.id = sol.ingredient_id WHERE sol.stock_outbound_id = ?`,
     [req.params.id]
   );
@@ -314,7 +316,7 @@ router.get('/stock-requests/:id', W, async (req, res) => {
   if (!sr) return res.status(404).json({ error: 'Không tìm thấy phiếu' });
 
   const [lines] = await pool.execute(
-    `SELECT srl.*, i.name, i.unit
+    `SELECT srl.*, i.name, i.unit, i.purchase_unit, i.conversion_rate
      FROM stock_request_lines srl
      JOIN ingredients i ON i.id = srl.ingredient_id
      WHERE srl.stock_request_id = ?`,
@@ -389,6 +391,22 @@ router.post('/stock-requests/:id/resolve', W, async (req, res) => {
   }
 });
 
+// Thêm vào warehouse.js
+router.get('/purchase-orders', W, async (req, res) => {
+  try {
+    // Lấy danh sách PO và Join với bảng suppliers để lấy tên nhà cung cấp 
+    const [rows] = await pool.execute(
+      `SELECT po.*, s.name AS supplier_name 
+       FROM purchase_orders po
+       JOIN suppliers s ON s.id = po.supplier_id 
+       ORDER BY po.id DESC`
+    );
+    res.json({ purchase_orders: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // UC-22: KIỂM KÊ TỒN KHO TRUNG TÂM (Phiên bản Thẻ Kho)
 router.post('/central-inventory/adjust', W, async (req, res) => {
   const { adjustments } = req.body;
@@ -455,7 +473,8 @@ router.get('/reports/xnt', W, async (req, res) => {
   const startDateFull = `${start} 00:00:00`;
 
   try {
-    const [ingredients] = await pool.execute('SELECT id, name, unit FROM ingredients ORDER BY name');
+    // const [ingredients] = await pool.execute('SELECT id, name, unit FROM ingredients ORDER BY name');
+    const [ingredients] = await pool.execute('SELECT id, name, unit, purchase_unit, conversion_rate FROM ingredients ORDER BY name');
     
     // Lấy tồn hiện tại của tất cả nguyên liệu
     const [currentStocks] = await pool.execute('SELECT ingredient_id, quantity FROM central_inventory');
@@ -494,6 +513,8 @@ router.get('/reports/xnt', W, async (req, res) => {
         id: ing.id,
         name: ing.name,
         unit: ing.unit,
+        purchase_unit: ing.purchase_unit,
+        conversion_rate: ing.conversion_rate,
         start_stock: startStock,
         total_in: totalIn,
         total_out: totalOut,

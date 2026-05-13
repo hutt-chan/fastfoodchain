@@ -1,19 +1,15 @@
-const pool = require('./db'); // Điều chỉnh đường dẫn tới file db.js nếu cần
+const pool = require('./db');
 const { transitionOrder } = require('./services/orderService');
 const { refreshBranchProductAvailability } = require('./services/inventoryService');
 const { getNumberConfig } = require('./services/configService');
 
-/**
- * UC-36: TỰ ĐỘNG GỌI TÀI XẾ (Cron Job)
- * Tính toán thời gian: Nếu món sắp xong (nhỏ hơn lead_time của Shipper), thì gọi API Shipper.
- */
+// 1. TÍNH TOÁN GỌI XE TRƯỚC KHI NẤU XONG
 async function autoDispatchShippers() {
   const conn = await pool.getConnection();
   try {
-    // Lấy thời gian Shipper di chuyển từ cấu hình (Mặc định 5 phút)
     const leadMin = await getNumberConfig('dispatch_lead_time_min', 5);
 
-    // Lấy các đơn hàng đang chuẩn bị (hoặc đóng gói xong) nhưng chưa gọi Shipper
+    // Lấy các đơn đang NẤU hoặc CHỜ ĐÓNG GÓI mà CHƯA có mã chuyến xe
     const [orders] = await conn.execute(
       `SELECT o.id, o.kitchen_started_at, o.status, o.branch_id 
        FROM orders o
@@ -23,19 +19,15 @@ async function autoDispatchShippers() {
     );
 
     for (const o of orders) {
-      // 1. Nếu đã đóng gói xong -> Gọi Shipper NGAY
       if (o.status === 'READY_PACKAGING') {
         await dispatchDelivery(conn, o.id, o.branch_id, 0);
         continue;
       }
 
-      // 2. Nếu đang nấu -> Tính max(thời gian nấu còn lại)
+      // Tính max thời gian nấu còn lại
       const [items] = await conn.execute(
         `SELECT oi.cook_status, p.prep_time_minutes 
-         FROM order_items oi 
-         JOIN products p ON p.id = oi.product_id 
-         WHERE oi.order_id = ?`,
-        [o.id]
+         FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?`, [o.id]
       );
 
       let maxRemaining = 0;
@@ -47,69 +39,60 @@ async function autoDispatchShippers() {
         if (remain > maxRemaining) maxRemaining = remain;
       }
 
-      // Nếu thời gian nấu còn lại <= thời gian Shipper di chuyển tới -> Gọi ngay để Shipper đến lấy là vừa nóng
+      // Đạt điểm gọi tài xế (VD: còn <= 5 phút nữa là xong)
       if (maxRemaining <= leadMin && maxRemaining > 0) {
         await dispatchDelivery(conn, o.id, o.branch_id, maxRemaining);
       }
     }
-  } catch (error) {
-    console.error('[UC-36] Lỗi khi chạy Auto Dispatch:', error);
-  } finally {
-    conn.release();
-  }
+  } catch (error) { console.error('[UC-36] Lỗi Auto Dispatch:', error); } 
+  finally { conn.release(); }
 }
 
-// Hàm hỗ trợ đổi trạng thái và tạo Tracking
 async function dispatchDelivery(conn, orderId, branchId, etaCooking) {
   const shipmentId = 'SHIP-' + Date.now();
-  console.log(`[UC-36] Đang gọi Shipper cho Đơn #${orderId} (ETA Bếp: ${Math.round(etaCooking)} phút)`);
+  console.log(`[UC-36] Đang gọi xe cho Đơn #${orderId} (ETA Bếp: ${Math.round(etaCooking)} phút)`);
 
-  // Lưu Tracking
+  // CHỈ ghi nhận tracking tìm tài xế, KHÔNG đổi status của order (Đơn vẫn đang nấu)
   await conn.execute(
     `INSERT INTO delivery_tracking (order_id, external_shipment_id, status) VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE external_shipment_id = VALUES(external_shipment_id), status = VALUES(status)`,
-    [orderId, shipmentId, 'FINDING_DRIVER']
+    [orderId, shipmentId, 'DRIVER_ON_WAY']
   );
-
-  // Đổi trạng thái đơn hàng dùng hàm chuẩn trong orderService
-  await transitionOrder(orderId, 'AWAITING_SHIPPER', {
-    note: `Hệ thống tự động gọi ĐVVC (Lead time). Mã chuyến: ${shipmentId}`,
-    branchId: branchId,
-    role: 'SYSTEM',
-  });
-}
-
-/**
- * UC-31: Quét định kỳ để bật lại món đã hết giờ khóa (Auto Resume)
- */
-async function autoResumeMenuItems() {
-  try {
-    // Tìm các chi nhánh đang có món hẹn giờ bật lại và giờ đó đã qua
-    const [rows] = await pool.execute(
-      `SELECT DISTINCT branch_id 
-       FROM branch_menu 
-       WHERE manual_off = 1 AND manual_off_until IS NOT NULL AND manual_off_until <= NOW()`
-    );
-
-    for (const r of rows) {
-      // Hàm refresh này (của bạn) đã có sẵn lệnh UPDATE manual_off = 0 bên trong!
-      await refreshBranchProductAvailability(r.branch_id);
-      console.log(`[UC-31] Đã quét và auto-resume menu cho Chi nhánh #${r.branch_id}`);
-    }
-  } catch (error) {
-    console.error('[UC-31] Lỗi Auto Resume Menu:', error);
-  }
-}
-
-// Khởi chạy tiến trình
-function startCronJobs() {
-  console.log('🚀 Background Jobs đang chạy (UC-31, UC-36)...');
   
-  // Chạy mỗi 30 giây
+  // Ghi log vào lịch sử để Quản lý biết hệ thống đã gọi xe
+  await conn.execute(
+    `INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)`,
+    [orderId, 'SYSTEM_LOG', `Hệ thống tự gọi ĐVVC. Mã chuyến: ${shipmentId}`]
+  );
+}
+
+// 2. GIẢ LẬP SHIPPER (MOCK WEBHOOK)
+async function mockShipperActions() {
+  const conn = await pool.getConnection();
+  try {
+    // Nếu Bếp đã đóng gói xong (AWAITING_SHIPPER) VÀ Tài xế đang đến (DRIVER_ON_WAY) 
+    // -> Giả lập tài xế bốc hàng đi -> Chuyển thành DELIVERING
+    const [readyToPick] = await conn.execute(`
+       SELECT o.id, o.branch_id FROM orders o 
+       JOIN delivery_tracking dt ON o.id = dt.order_id 
+       WHERE o.status = 'AWAITING_SHIPPER' AND dt.status = 'DRIVER_ON_WAY'
+    `);
+    
+    for (const o of readyToPick) {
+       console.log(`[Mock Shipper] Tài xế đã lấy Đơn #${o.id}. Đang giao hàng!`);
+       await transitionOrder(o.id, 'DELIVERING', { note: 'Tài xế đã lấy hàng (Mock Webhook)', branchId: o.branch_id, role: 'SYSTEM' });
+       await conn.execute(`UPDATE delivery_tracking SET status = 'DELIVERING' WHERE order_id = ?`, [o.id]);
+    }
+  } catch(e) { console.error(e); } 
+  finally { conn.release(); }
+}
+
+function startCronJobs() {
+  console.log('🚀 Background Jobs đang chạy...');
   setInterval(() => {
     autoDispatchShippers();
-    autoResumeMenuItems();
-  }, 30000); 
+    mockShipperActions(); // Thêm giả lập vào vòng lặp
+    // autoResumeMenuItems(); // Bật lại món (giữ nguyên của bạn)
+  }, 15000); // Chạy 15s/lần cho mượt
 }
-
 module.exports = { startCronJobs };

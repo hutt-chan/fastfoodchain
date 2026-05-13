@@ -414,21 +414,83 @@ document.getElementById('clearV').onclick = () => {
 };
 
 document.getElementById('applyV').onclick = async () => {
-  const code = document.getElementById('voucherSel').value.trim(); // Đã sửa vcode -> voucherSel
-  if (!code) return document.getElementById('vinfo').textContent = '';
-  if (!branchId) return showMsg('<div class="msg err">Chọn chi nhánh trước</div>');
-  let subtotal = 0; cartItems.forEach(c => subtotal += Number(c.unit_price) * c.quantity);
+  const code = document.getElementById('voucherSel').value.trim();
+
+  if (!code) {
+    document.getElementById('vinfo').textContent = '';
+    return;
+  }
+
+  if (!branchId) {
+    return showMsg('<div class="msg err">Chọn chi nhánh trước</div>');
+  }
+
+  // Tính subtotal đúng gồm cả topping
+  let subtotal = 0;
+
+  cartItems.forEach(c => {
+
+    let opts = [];
+
+    try {
+      opts = typeof c.options_json === 'string'
+        ? JSON.parse(c.options_json)
+        : (c.options_json || []);
+
+      if (!Array.isArray(opts)) opts = [];
+
+    } catch {
+      opts = [];
+    }
+
+    let toppingPrice = 0;
+
+    opts.forEach(t => {
+      toppingPrice += Number(t.price || 0);
+    });
+
+    const finalPrice =
+      Number(c.unit_price) + toppingPrice;
+
+    subtotal += finalPrice * c.quantity;
+  });
+
   try {
-    const v = await api('/vouchers/validate', { method:'POST', body:{ code, branch_id: branchId, subtotal } });
-    voucherId = v.voucher_id; discount = v.discount_amount;
-    document.getElementById('vinfo').innerHTML = '<span style="color:var(--success);font-weight:700">✓ Áp dụng thành công: giảm ' + vnd(discount) + '</span>';
+
+    const v = await api('/vouchers/validate', {
+      method: 'POST',
+      body: {
+        code,
+        branch_id: branchId,
+        subtotal
+      }
+    });
+
+    voucherId = v.voucher_id;
+    discount = Number(v.discount_amount || 0);
+
+    document.getElementById('vinfo').innerHTML =
+      '<span style="color:var(--success);font-weight:700">' +
+      '✓ Áp dụng thành công: giảm ' +
+      vnd(discount) +
+      '</span>';
+
     renderTotals();
+
   } catch (e) {
-    voucherId = null; discount = 0;
-    document.getElementById('vinfo').innerHTML = '<span style="color:var(--danger);font-weight:700">✗ ' + escapeHtml(e.message) + '</span>';
+
+    voucherId = null;
+    discount = 0;
+
+    document.getElementById('vinfo').innerHTML =
+      '<span style="color:var(--danger);font-weight:700">' +
+      '✗ ' + escapeHtml(e.message) +
+      '</span>';
+
     renderTotals();
   }
 };
+
 document.getElementById('checkout').onclick = async () => {
   showMsg('');
   const addr = document.getElementById('addr').value.trim();
@@ -557,12 +619,37 @@ window.viewOrder = async function(id) {
   try {
     const { order, items, history, delivery } = await api('/orders/' + id);
     const lines = items.map(i => {
-      const opts = typeof i.options_json === 'string' ? JSON.parse(i.options_json) : (i.options_json || []);
-      let toppingHtml = '';
-      if (opts.length > 0) {
-        toppingHtml = '<br><small class="tag" style="margin-top:4px; display:inline-block;">+ ' + opts.map(t => escapeHtml(t.name)).join(', ') + '</small>';
+
+      let opts = [];
+
+      try {
+        opts = typeof i.options_json === 'string'
+            ? JSON.parse(i.options_json)
+            : i.options_json;
+
+        if (!Array.isArray(opts)) {
+            opts = [];
+        }
+      } catch (e) {
+        opts = [];
       }
-      return '<tr><td>' + escapeHtml(i.product_name) + toppingHtml + '</td><td>' + i.quantity + '</td><td>' + vnd(i.unit_price) + '</td><td>' + vnd(i.unit_price * i.quantity) + '</td></tr>';
+
+      let toppingHtml = '';
+
+      if (Array.isArray(opts) && opts.length > 0) {
+        toppingHtml =
+            '<br><small class="tag" style="margin-top:4px; display:inline-block;">+ ' +
+            opts.map(t => escapeHtml(t.name)).join(', ') +
+            '</small>';
+      }
+
+      return '<tr>' +
+        '<td>' + escapeHtml(i.product_name) + toppingHtml + '</td>' +
+        '<td>' + i.quantity + '</td>' +
+        '<td>' + vnd(i.unit_price) + '</td>' +
+        '<td>' + vnd(i.unit_price * i.quantity) + '</td>' +
+        '</tr>';
+
     }).join('');
     
     const hist = (history || []).map(h => '<li><small class="tag">🕒 ' + formatDateTime(h.created_at) + '</small> — <strong>' + statusLabel(h.status) + '</strong>' + (h.note ? ' · ' + escapeHtml(h.note) : '') + '</li>').join('');    
@@ -691,8 +778,6 @@ document.getElementById('profileBtn').onclick = () => {
     '<label for="pf_name">Họ tên</label><input id="pf_name" value="' + escapeHtml(u.full_name || '') + '" />' +
     '<label for="pf_email">Email</label><input id="pf_email" type="email" value="' + escapeHtml(u.email || '') + '" />' +
     '<label for="pf_addr">Địa chỉ giao mặc định</label><input id="pf_addr" value="' + escapeHtml(u.default_address || '') + '" />' +
-    '<div class="grid grid-2"><div><label for="pf_lat">Vĩ độ mặc định</label><input id="pf_lat" type="number" step="0.0000001" value="' + (u.default_lat || '') + '" /></div>' +
-    '<div><label for="pf_lng">Kinh độ mặc định</label><input id="pf_lng" type="number" step="0.0000001" value="' + (u.default_lng || '') + '" /></div></div>' +
     '<hr style="border-color:var(--border);margin:1rem 0"/><h4>🔒 Đổi mật khẩu</h4>' +
     '<label for="pf_oldp">Mật khẩu hiện tại</label><input id="pf_oldp" type="password" autocomplete="current-password" />' +
     '<label for="pf_newp">Mật khẩu mới (≥ 8 ký tự)</label><input id="pf_newp" type="password" autocomplete="new-password" />' +
@@ -703,19 +788,31 @@ document.getElementById('profileBtn').onclick = () => {
 };
 window.saveProfile = async function() {
   try {
-    await api('/auth/profile', { method:'PATCH', body:{
-      full_name: document.getElementById('pf_name').value || null,
-      email: document.getElementById('pf_email').value || null,
-      default_address: document.getElementById('pf_addr').value || null,
-      default_lat: parseFloat(document.getElementById('pf_lat').value) || null,
-      default_lng: parseFloat(document.getElementById('pf_lng').value) || null,
-    }});
-    const me = await api('/auth/me'); setUser(me);
+
+    await api('/auth/profile', {
+      method:'PATCH',
+      body:{
+        full_name: document.getElementById('pf_name').value || null,
+        email: document.getElementById('pf_email').value || null,
+        default_address: document.getElementById('pf_addr').value || null
+      }
+    });
+
+    const me = await api('/auth/me');
+
+    setUser(me);
+
     closeModal();
+
     await alertModal('Đã lưu hồ sơ');
+
     location.reload();
-  } catch (e) { alertModal(e.message); }
+
+  } catch (e) {
+    alertModal(e.message);
+  }
 };
+
 window.changePassword = async function() {
   const oldP = document.getElementById('pf_oldp').value;
   const newP = document.getElementById('pf_newp').value;
