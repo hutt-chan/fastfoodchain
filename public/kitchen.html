@@ -17,23 +17,38 @@
 <div class="layout">
   <input type="text" id="qrScanner" style="position: absolute; left: -9999px;" autofocus autocomplete="off" />
   <div id="msg" aria-live="polite"></div>
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem">
-      <h2>👨‍🍳 Hàng đợi bếp</h2>
-      <div class="row-actions" id="adminBar" style="display:none;margin:0">
-        <label for="branchSel" style="margin:0">Chi nhánh</label>
-        <select id="branchSel" style="width:auto;min-width:180px"></select>
+
+  <div class="tabs" style="margin-bottom: 1rem;">
+    <button class="active" data-tab="kds">🍳 Màn hình KDS</button>
+    <button data-tab="history">📜 Lịch sử</button>
+  </div>
+
+  <section id="tab-kds" class="tab-panel active">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem">
+        <h2>👨‍🍳 Hàng đợi bếp</h2>
+        <div class="row-actions" id="adminBar" style="display:none;margin:0">
+          <label for="branchSel" style="margin:0">Chi nhánh</label>
+          <select id="branchSel" style="width:auto;min-width:180px"></select>
+        </div>
+        <small class="tag" id="lastUpdate"></small>
       </div>
-      <small class="tag" id="lastUpdate"></small>
+      <p class="tag">Bắt đầu nấu → Hoàn thành → Đóng gói. Tự làm mới mỗi 10 giây.</p>
+      <div id="kpis" class="kpi-grid"></div>
     </div>
-    <p class="tag">Bắt đầu nấu → Hoàn thành → Đóng gói. Tự làm mới mỗi 10 giây.</p>
-    <div id="kpis" class="kpi-grid"></div>
-  </div>
-  <div class="grid grid-2">
-    <div class="card"><h3>1️⃣ Mới — chờ nấu</h3><div id="col1"></div></div>
-    <div class="card"><h3>2️⃣ Đang nấu</h3><div id="col2"></div></div>
-  </div>
-  <div class="card"><h3>3️⃣ Sẵn sàng đóng gói</h3><div id="col3"></div></div>
+    <div class="grid grid-2">
+      <div class="card"><h3>1️⃣ Mới — chờ nấu</h3><div id="col1"></div></div>
+      <div class="card"><h3>2️⃣ Đang nấu</h3><div id="col2"></div></div>
+    </div>
+    <div class="card"><h3>3️⃣ Sẵn sàng đóng gói</h3><div id="col3"></div></div>
+  </section>
+
+  <section id="tab-history" class="tab-panel">
+    <div class="card">
+      <h2>📜 Đơn đã xử lý</h2>
+      <div id="historyList"></div>
+    </div>
+  </section>
 </div>
 <script src="/js/api.js"></script>
 <script>
@@ -74,6 +89,19 @@ function formatTime(dateString) {
     hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' 
   });
   */
+}
+
+// Thêm vào kitchen.html, trong phần <script>
+function formatDateTime(dateString) {
+  if (!dateString) return '';
+  const d = new Date(dateString);
+  return d.toLocaleString('vi-VN', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
 }
 
 // Thay thế hàm renderCard cũ bằng hàm này
@@ -241,13 +269,52 @@ async function load() {
     if (firstLoad) { hideLoading(); firstLoad = false; }
   }
 }
+// ==========================================
+// XỬ LÝ CHUYỂN TAB VÀ LỊCH SỬ
+// ==========================================
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+    
+    // Gọi hàm tương ứng khi chuyển tab
+    if (b.dataset.tab === 'history') loadHistory();
+    if (b.dataset.tab === 'kds') load();
+  };
+});
 
+async function loadHistory() {
+  // Hiển thị loading cho đẹp
+  document.getElementById('historyList').innerHTML = '<p class="tag">Đang tải lịch sử...</p>';
+  
+  try {
+    const q = adminBranch ? '?branch_id=' + adminBranch : '';  
+    const { orders } = await api('/kitchen/history' + q);  
+    
+    const html = orders.length ? `<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Khách</th><th>Tổng</th><th>Trạng thái</th><th>Thời gian</th></tr></thead><tbody>` +    
+      orders.map(o => `<tr>      
+        <td><strong>${escapeHtml(o.order_code)}</strong></td>      
+        <td>${escapeHtml(o.customer_name)}</td>      
+        <td>${typeof vnd === 'function' ? vnd(o.total) : o.total.toLocaleString() + 'đ'}</td>      
+        <td><span class="badge ${o.status === 'COMPLETED' ? 'ok' : 'warn'}">${typeof statusLabel === 'function' ? statusLabel(o.status) : o.status}</span></td>      
+        <td>${formatTime(o.created_at)}</td>    
+      </tr>`).join('') + '</tbody></table></div>' : '<p class="empty">Chưa có đơn nào</p>';  
+      
+    document.getElementById('historyList').innerHTML = html;
+  } catch(e) {
+    document.getElementById('historyList').innerHTML = '<p class="msg err">Lỗi tải lịch sử: ' + escapeHtml(e.message) + '</p>';
+  }
+}
+// ==========================================
 (async () => {
   await setupAdminBar();
   load();
   setInterval(() => {
-    // Chỉ refresh nếu không hover chuột và không có Modal nào đang mở
-    if (!isHovering && !document.getElementById('modalBack')) { // <-- Đã sửa ở đây
+    // Chỉ refresh nếu không hover chuột, không có Modal và đang đứng ở tab KDS
+    const isKdsTabActive = document.getElementById('tab-kds').classList.contains('active');
+    if (!isHovering && !document.getElementById('modalBack') && isKdsTabActive) { 
       load();
     }
   }, 10000);

@@ -671,6 +671,17 @@ router.get('/cash-shifts', B, async (req, res) => {
   );
   res.json({ shifts: rows });
 });
+// API UC: Đánh dấu đã thu tiền COD (COD_COLLECTED)
+router.post('/orders/:id/mark-cod-collected', B, asyncHandler(async (req, res) => {
+  const scope = branchScope(req);
+  const [[o]] = await pool.execute('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+  if (!o) return res.status(404).json({ error: 'Không tìm thấy' });
+  if (req.user.role !== 'ADMIN' && Number(o.branch_id) !== Number(scope))
+    return res.status(403).json({ error: 'Không thuộc chi nhánh bạn' });
+  await pool.execute('UPDATE orders SET payment_status = ? WHERE id = ?', ['COD_COLLECTED', o.id]);
+  await logAudit(req.user.id, 'COD_COLLECTED', 'branch', { orderId: o.id }, req.ip);
+  res.json({ ok: true });
+}));
 
 // =========================================================
 // BỔ SUNG UC-30: CHI NHÁNH NHẬN HÀNG TỪ KHO TỔNG

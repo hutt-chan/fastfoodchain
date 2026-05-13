@@ -240,28 +240,20 @@ async function openDetail(id) {
   const rows = lines.map(l => {
     const qtyDisp = canApprove 
       ? `<input type="number" data-line="${l.ingredient_id}" value="${Number(l.qty_requested)}" min="0" style="width:80px"/>`
-      : `<strong>${fmtNum(l.qty_approved || 0)}</strong>`; 
-    
-    // Đánh dấu đỏ nếu xin vượt Hạn mức
-    const isOverQuota = Number(l.qty_requested) > Number(l.quota);
-    const reqDisp = isOverQuota 
-      ? `<span style="color:var(--danger)">${fmtNum(l.qty_requested)} (Vượt quota)</span>` 
-      : fmtNum(l.qty_requested);
-      
+      : `<strong>${fmtNum(l.qty_approved || 0)}</strong>`;
     return `<tr>
       <td>${escapeHtml(l.name)}</td>
-      <td>${fmtNum(l.quota)}</td>
-      <td>${reqDisp}</td>
+      <td>${fmtNum(l.qty_requested)}</td>
       <td>${qtyDisp}</td>
     </tr>`;
-  }).join('');
+}).join('');
 
   showModal(`<h3>Phiếu #${request.id} ${request.is_urgent ? ' — ⚡ KHẨN' : ''}</h3>
     <p class="tag">Trạng thái: <strong>${request.status}</strong></p>
     ${request.reject_reason ? `<p class="msg err" style="margin-bottom:1rem">Lý do từ chối: ${escapeHtml(request.reject_reason)}</p>` : ''}
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nguyên liệu</th><th>Hạn mức/Tuần</th><th>Chi nhánh xin</th><th>Quyết định Duyệt</th></tr></thead>
+        <thead><tr><th>Nguyên liệu</th><th>Chi nhánh xin</th><th>Quyết định Duyệt</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -428,20 +420,25 @@ document.getElementById('addPoLine').onclick = () => {
   div.className = 'row-actions';
   div.dataset.pol = 1;
   div.innerHTML = `
-    <select data-ing style="flex:2" onchange="updatePoPrice(this)">
-      <option value="">-- Chọn nguyên liệu --</option>
-      ${ingredients.map(i => `<option value="${i.id}" data-price="${i.unit_cost * i.conversion_rate}">${escapeHtml(i.name)}</option>`).join('')}
-    </select>
-    <input type="number" data-qty value="1" style="flex:1" placeholder="SL">
-    <input type="number" data-price style="flex:1" placeholder="Giá nhập">
-    <button class="secondary" onclick="this.parentElement.remove()">✕</button>
-  `;
+  <select data-ing style="flex:2" onchange="updatePoPriceAndUnit(this)">
+    <option value="">-- Chọn nguyên liệu --</option>
+    ${ingredients.map(i => `<option value="${i.id}" data-unit="${escapeHtml(i.purchase_unit || i.unit)}" data-price="${i.unit_cost * i.conversion_rate}">${escapeHtml(i.name)}</option>`).join('')}
+  </select>
+  <span class="tag" style="min-width:40px" data-unit-display></span>
+  <input type="number" data-qty style="flex:1" placeholder="SL" value="1">
+  <input type="number" data-price style="flex:1" placeholder="Giá">
+  <button class="secondary" onclick="this.parentElement.remove()">✕</button>
+`;
   el.appendChild(div);
 };
-
-window.updatePoPrice = function(sel) {
-  const price = sel.options[sel.selectedIndex].dataset.price;
-  sel.parentElement.querySelector('[data-price]').value = price || 0;
+// Khi chọn nguyên liệu, tự động cập nhật đơn vị hiển thị và giá đề xuất dựa trên dữ liệu đã lưu
+window.updatePoPriceAndUnit = function(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  const price = opt.dataset.price || 0;
+  const unit = opt.dataset.unit || '';
+  const parent = sel.parentElement;
+  parent.querySelector('[data-price]').value = price;
+  parent.querySelector('[data-unit-display]').textContent = unit;
 };
 
 document.getElementById('createPo').onclick = async () => {
@@ -512,18 +509,18 @@ window.viewPoDetail = async function(id) {
     const { purchase_order, lines } = await api('/warehouse/purchase-orders/' + id);
     
     const rows = lines.map(l => {
-      const unit = l.purchase_unit || l.unit;
-      const received = l.qty_received !== null ? fmtNum(l.qty_received) : '<span style="color:#888">Chưa nhận</span>';
-      const lineTotal = Number(l.qty_ordered) * Number(l.unit_price);
-      
-      return `<tr>
-        <td>${escapeHtml(l.name)}</td>
-        <td>${fmtNum(l.qty_ordered)} ${escapeHtml(unit)}</td>
-        <td><strong>${received}</strong></td>
-        <td>${vnd(l.unit_price)}</td>
-        <td>${vnd(lineTotal)}</td>
-      </tr>`;
-    }).join('');
+    const unit = l.purchase_unit || l.unit; 
+    const received = l.qty_received !== null ? fmtNum(l.qty_received) : '<span style="color:#888">Chưa nhận</span>';
+    const lineTotal = Number(l.qty_ordered) * Number(l.unit_price);
+    
+    return `<tr>
+      <td>${escapeHtml(l.name)}</td>
+      <td>${fmtNum(l.qty_ordered)} ${escapeHtml(unit)}</td>
+      <td><strong>${received} ${escapeHtml(unit)}</strong></td>
+      <td>${vnd(l.unit_price)}</td>
+      <td>${vnd(lineTotal)}</td>
+    </tr>`;
+  }).join('');
 
     showModal(`<h3>📄 Chi tiết PO #${purchase_order.id}</h3>
       <div class="kpi-grid" style="margin-bottom:1rem">

@@ -51,53 +51,82 @@ router.get('/ingredients', W, async (req, res) => {
   res.json({ ingredients: rows });
 });
 
-// UC-21: Nhập kho từ PO với quy đổi đơn vị và Transaction + Ghi Thẻ Kho
-// UC-21: Nhập kho từ PO + FEFO (Lưu lô hàng)
+// UC-21: Nhập kho từ PO với quy đổi đơn vị và FEFO (Lưu lô hàng)
 router.post('/purchase-orders/:id/receive', W, async (req, res) => {
   const poId = req.params.id;
-  const { lines } = req.body; // Thêm exp_date từ UI
+  const { lines } = req.body; // lines: [{ ingredient_id, qty_received, exp_date }]
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    let allReceived = true;
+
+    // Kiểm tra PO tồn tại
+    const [[po]] = await conn.execute('SELECT * FROM purchase_orders WHERE id = ? FOR UPDATE', [poId]);
+    if (!po) throw new Error('PO không tồn tại');
 
     for (const l of lines || []) {
       if (!l.exp_date) throw new Error('Vui lòng nhập Hạn sử dụng cho tất cả nguyên liệu');
-      
-      await conn.execute(
-        'UPDATE purchase_order_lines SET qty_received = COALESCE(qty_received, 0) + ? WHERE purchase_order_id = ? AND ingredient_id = ?',
-        [l.qty_received, poId, l.ingredient_id]
-      );
-      
+      const qtyReceived = Number(l.qty_received);
+      if (qtyReceived <= 0) continue;
+
+      // Lấy thông tin tồn kho và quy đổi
       const [[ing]] = await conn.execute('SELECT conversion_rate FROM ingredients WHERE id = ?', [l.ingredient_id]);
       const rate = ing ? Number(ing.conversion_rate) : 1;
-      const qtyBase = Number(l.qty_received) * rate;
+      const qtyBase = qtyReceived * rate;
 
-      // 1. Cập nhật Tồn kho tổng
+      // Lấy dòng PO line hiện tại để kiểm tra đã nhận
+      const [[poLine]] = await conn.execute(
+        'SELECT qty_ordered, qty_received FROM purchase_order_lines WHERE purchase_order_id = ? AND ingredient_id = ? FOR UPDATE',
+        [poId, l.ingredient_id]
+      );
+      if (!poLine) throw new Error('Nguyên liệu không có trong PO');
+      const alreadyReceived = Number(poLine.qty_received || 0);
+      const totalAfter = alreadyReceived + qtyReceived;
+      if (totalAfter > Number(poLine.qty_ordered)) {
+        throw new Error(`Vượt quá số lượng đặt (đã nhận ${alreadyReceived}, đặt ${poLine.qty_ordered})`);
+      }
+
+      // Cập nhật số lượng đã nhận
+      await conn.execute(
+        'UPDATE purchase_order_lines SET qty_received = ? WHERE purchase_order_id = ? AND ingredient_id = ?',
+        [totalAfter, poId, l.ingredient_id]
+      );
+
+      // Cập nhật tồn kho tổng
       const [[ci]] = await conn.execute('SELECT quantity FROM central_inventory WHERE ingredient_id = ? FOR UPDATE', [l.ingredient_id]);
       const currentQty = ci ? Number(ci.quantity) : 0;
       const newQty = currentQty + qtyBase;
-      if (!ci) await conn.execute('INSERT INTO central_inventory (ingredient_id, quantity) VALUES (?, ?)', [l.ingredient_id, newQty]);
-      else await conn.execute('UPDATE central_inventory SET quantity = ? WHERE ingredient_id = ?', [newQty, l.ingredient_id]);
+      if (!ci) {
+        await conn.execute('INSERT INTO central_inventory (ingredient_id, quantity) VALUES (?, ?)', [l.ingredient_id, newQty]);
+      } else {
+        await conn.execute('UPDATE central_inventory SET quantity = ? WHERE ingredient_id = ?', [newQty, l.ingredient_id]);
+      }
 
-      // 2. Ghi Thẻ kho
+      // Ghi Thẻ kho
       await conn.execute(
         'INSERT INTO central_inventory_transactions (ingredient_id, transaction_type, reference_id, qty_change, qty_after) VALUES (?, ?, ?, ?, ?)',
         [l.ingredient_id, 'PO_RECEIVE', poId, qtyBase, newQty]
       );
 
-      // 3. TẠO LÔ HÀNG (FEFO)
-      await conn.execute(
-        'INSERT INTO central_inventory_batches (ingredient_id, po_id, quantity, expiration_date) VALUES (?, ?, ?, ?)',
-        [l.ingredient_id, poId, qtyBase, l.exp_date]
+      // Tạo hoặc cập nhật lô hàng (FEFO)
+      const [[existingBatch]] = await conn.execute(
+        'SELECT id, quantity FROM central_inventory_batches WHERE ingredient_id = ? AND po_id = ? AND expiration_date = ? FOR UPDATE',
+        [l.ingredient_id, poId, l.exp_date]
       );
+      if (existingBatch) {
+        await conn.execute('UPDATE central_inventory_batches SET quantity = quantity + ? WHERE id = ?', [qtyBase, existingBatch.id]);
+      } else {
+        await conn.execute(
+          'INSERT INTO central_inventory_batches (ingredient_id, po_id, quantity, expiration_date) VALUES (?, ?, ?, ?)',
+          [l.ingredient_id, poId, qtyBase, l.exp_date]
+        );
+      }
+    }
 
-      // Lấy toàn bộ dòng của PO từ DB để kiểm tra xem đã nhận đủ tất cả các món chưa
+    // Kiểm tra xem tất cả dòng đã nhận đủ chưa
     const [allLines] = await conn.execute(
-      'SELECT qty_ordered, qty_received FROM purchase_order_lines WHERE purchase_order_id = ?', 
+      'SELECT qty_ordered, qty_received FROM purchase_order_lines WHERE purchase_order_id = ?',
       [poId]
     );
-
     let allReceived = true;
     for (const line of allLines) {
       if (Number(line.qty_received || 0) < Number(line.qty_ordered)) {
@@ -105,20 +134,20 @@ router.post('/purchase-orders/:id/receive', W, async (req, res) => {
         break;
       }
     }
+    const newStatus = allReceived ? 'RECEIVED' : 'PARTIAL_RECEIVED';
+    await conn.execute('UPDATE purchase_orders SET status = ? WHERE id = ?', [newStatus, poId]);
 
-    const status = allReceived ? 'RECEIVED' : 'PARTIAL_RECEIVED';
-    }
-
-    const status = allReceived ? 'RECEIVED' : 'PARTIAL_RECEIVED';
-    await conn.execute("UPDATE purchase_orders SET status = ? WHERE id = ?", [status, poId]);
     await conn.commit();
-    res.json({ ok: true, status });
+    res.json({ ok: true, status: newStatus });
   } catch (e) {
     await conn.rollback();
     res.status(400).json({ error: e.message });
-  } finally { conn.release(); }
+  } finally {
+    conn.release();
+  }
 });
 
+// UC-24: Xem chi tiết PO + Lô hàng (FEFO)
 router.get('/purchase-orders/:id', W, async (req, res) => {
   const [[po]] = await pool.execute(
     `SELECT po.*, s.name AS supplier_name FROM purchase_orders po
@@ -279,18 +308,17 @@ router.post('/outbounds/:id/ship', W, async (req, res) => {
   } finally { conn.release(); }
 });
 
+// UC-23: Duyệt phiếu xin hàng (Có thể duyệt thủ công từng dòng hoặc tự động duyệt nếu tồn kho đủ)
 router.get('/stock-requests/:id', W, async (req, res) => {
   const [[sr]] = await pool.execute('SELECT * FROM stock_requests WHERE id = ?', [req.params.id]);
   if (!sr) return res.status(404).json({ error: 'Không tìm thấy phiếu' });
 
-  // Lấy chi tiết dòng yêu cầu, JOIN thêm bảng branch_quotas để lấy Hạn mức
   const [lines] = await pool.execute(
-    `SELECT srl.*, i.name, COALESCE(bq.max_qty_per_week, 0) AS quota 
+    `SELECT srl.*, i.name, i.unit
      FROM stock_request_lines srl
      JOIN ingredients i ON i.id = srl.ingredient_id
-     LEFT JOIN branch_quotas bq ON bq.ingredient_id = srl.ingredient_id AND bq.branch_id = ?
      WHERE srl.stock_request_id = ?`,
-    [sr.branch_id, req.params.id]
+    [req.params.id]
   );
   res.json({ request: sr, lines });
 });
@@ -429,24 +457,39 @@ router.get('/reports/xnt', W, async (req, res) => {
   try {
     const [ingredients] = await pool.execute('SELECT id, name, unit FROM ingredients ORDER BY name');
     
-    const [transactions] = await pool.execute(`
-      SELECT 
-        ingredient_id,
-        SUM(CASE WHEN created_at < ? THEN qty_change ELSE 0 END) AS start_stock,
-        SUM(CASE WHEN created_at BETWEEN ? AND ? AND qty_change > 0 THEN qty_change ELSE 0 END) AS total_in,
-        SUM(CASE WHEN created_at BETWEEN ? AND ? AND qty_change < 0 THEN ABS(qty_change) ELSE 0 END) AS total_out
+    // Lấy tồn hiện tại của tất cả nguyên liệu
+    const [currentStocks] = await pool.execute('SELECT ingredient_id, quantity FROM central_inventory');
+    const stockMap = new Map(currentStocks.map(s => [s.ingredient_id, Number(s.quantity)]));
+
+    // Lấy tổng nhập trong kỳ
+    const [inPeriod] = await pool.execute(`
+      SELECT ingredient_id, SUM(qty_change) AS total_in
       FROM central_inventory_transactions
-      WHERE created_at <= ?
+      WHERE transaction_type IN ('PO_RECEIVE', 'ADJUSTMENT', 'RETURN')
+        AND created_at BETWEEN ? AND ?
+        AND qty_change > 0
       GROUP BY ingredient_id
-    `, [startDateFull, startDateFull, endDateFull, startDateFull, endDateFull, endDateFull]);
+    `, [startDateFull, endDateFull]);
+
+    // Lấy tổng xuất trong kỳ
+    const [outPeriod] = await pool.execute(`
+      SELECT ingredient_id, SUM(ABS(qty_change)) AS total_out
+      FROM central_inventory_transactions
+      WHERE transaction_type IN ('OUTBOUND', 'ADJUSTMENT', 'WASTE')
+        AND created_at BETWEEN ? AND ?
+        AND qty_change < 0
+      GROUP BY ingredient_id
+    `, [startDateFull, endDateFull]);
+
+    const inMap = new Map(inPeriod.map(r => [r.ingredient_id, Number(r.total_in)]));
+    const outMap = new Map(outPeriod.map(r => [r.ingredient_id, Number(r.total_out)]));
 
     const report = ingredients.map(ing => {
-      const trans = transactions.find(t => t.ingredient_id === ing.id) || {};
-      const startStock = Number(trans.start_stock || 0);
-      const totalIn = Number(trans.total_in || 0);
-      const totalOut = Number(trans.total_out || 0);
-      const endStock = startStock + totalIn - totalOut; 
-
+      const currentQty = stockMap.get(ing.id) || 0;
+      const totalIn = inMap.get(ing.id) || 0;
+      const totalOut = outMap.get(ing.id) || 0;
+      const startStock = currentQty - totalIn + totalOut; // suy ra tồn đầu kỳ
+      const endStock = currentQty;
       return {
         id: ing.id,
         name: ing.name,
