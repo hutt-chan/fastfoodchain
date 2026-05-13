@@ -39,6 +39,29 @@ router.get('/dashboard', B, async (req, res) => {
   res.json({ branch_id: bid, status_counts: counts, pending_confirm: pending.c });
 });
 
+/**
+ * Hàm cầu nối: Tìm các món ăn bị ảnh hưởng khi nguyên liệu thay đổi và cập nhật lại Menu
+ */
+async function triggerMenuUpdateByIngredients(branchId, ingredientIds) {
+  if (!ingredientIds || ingredientIds.length === 0) return;
+
+  // 1. Truy vấn bảng product_bom để tìm các product_id có sử dụng các ingredient_id này
+  const placeholders = ingredientIds.map(() => '?').join(',');
+  const [bomRows] = await pool.execute(
+    `SELECT DISTINCT product_id FROM product_bom WHERE ingredient_id IN (${placeholders})`,
+    ingredientIds
+  );
+
+  if (bomRows.length === 0) return;
+
+  // 2. Lấy danh sách ID món ăn
+  const affectedProductIds = bomRows.map(r => r.product_id);
+
+  // 3. Gọi hàm cập nhật menu có sẵn của bạn
+  const { refreshBranchProductAvailability } = require('../services/inventoryService');
+  await refreshBranchProductAvailability(branchId, affectedProductIds);
+}
+
 router.get('/orders', B, async (req, res) => {
   const bid = req.user.role === 'ADMIN' ? Number(req.query.branch_id) || 1 : req.user.branch_id;
   const [rows] = await pool.execute(
@@ -74,7 +97,10 @@ router.post(
 router.get('/menu', B, async (req, res) => {
   const bid = req.user.role === 'ADMIN' ? Number(req.query.branch_id) || 1 : req.user.branch_id;
   const [rows] = await pool.execute(
-    `SELECT bm.*, p.name FROM branch_menu bm JOIN products p ON p.id = bm.product_id WHERE bm.branch_id = ?`,
+    `SELECT bm.*, p.name 
+     FROM branch_menu bm 
+     JOIN products p ON p.id = bm.product_id 
+     WHERE bm.branch_id = ? AND p.is_deleted = 0 AND p.is_active_chain = 1`,
     [bid]
   );
   res.json({ items: rows });
@@ -538,19 +564,52 @@ router.get('/kitchen/queue', B, async (req, res) => {
 });
 
 // UC-33: Nhân viên bếp bấm "Bắt đầu nấu" 1 món cụ thể
+// UC-33: Nhân viên bếp bấm "Bắt đầu nấu" 1 món cụ thể
 router.post('/kitchen/items/:itemId/start', B, async (req, res) => {
   const itemId = req.params.itemId;
   
-  // Chuyển trạng thái món
+  // 1. Chuyển trạng thái món
   await pool.execute(
     `UPDATE order_items SET cook_status = 'COOKING', cook_started_at = NOW() 
      WHERE id = ? AND cook_status = 'PENDING'`,
     [itemId]
   );
   
-  // Nếu đây là món đầu tiên của đơn được nấu, tự động chuyển đơn sang COOKING
-  const [[item]] = await pool.execute('SELECT order_id FROM order_items WHERE id = ?', [itemId]);
+  const [[item]] = await pool.execute('SELECT order_id, product_id, quantity FROM order_items WHERE id = ?', [itemId]);
+  
   if (item) {
+     const [[order]] = await pool.execute('SELECT branch_id FROM orders WHERE id = ?', [item.order_id]);
+     const bid = order.branch_id;
+
+     // ========================================================
+     // THÊM MỚI: TRỪ KHO THEO ĐỊNH LƯỢNG (BOM) VÀ KIỂM TRA TẮT MÓN
+     // ========================================================
+     const [bom] = await pool.execute(
+       'SELECT ingredient_id, qty_per_unit FROM product_bom WHERE product_id = ?', 
+       [item.product_id]
+     );
+
+     if (bom.length > 0) {
+       const affectedIngredients = [];
+       for (const b of bom) {
+         // Lấy số lượng x định mức
+         const deductQty = Number(b.qty_per_unit) * Number(item.quantity);
+         
+         // Trừ kho (dùng GREATEST để tránh bị âm kho)
+         await pool.execute(
+           `UPDATE branch_inventory SET quantity = GREATEST(0, quantity - ?) 
+            WHERE branch_id = ? AND ingredient_id = ?`,
+           [deductQty, bid, b.ingredient_id]
+         );
+         affectedIngredients.push(b.ingredient_id);
+       }
+       
+       // GỌI HÀM CẦU NỐI: Quét xem kho có về 0 không để tự động tắt món
+       await triggerMenuUpdateByIngredients(bid, affectedIngredients);
+     }
+     // ========================================================
+
+     // Tự động chuyển trạng thái đơn sang COOKING nếu đây là món đầu tiên
      await pool.execute(
        `UPDATE orders SET status = 'COOKING', kitchen_started_at = COALESCE(kitchen_started_at, NOW()) 
         WHERE id = ? AND status = 'AWAITING_KITCHEN'`, 
@@ -558,7 +617,7 @@ router.post('/kitchen/items/:itemId/start', B, async (req, res) => {
      );
   }
   
-  res.json({ ok: true, message: 'Đã bắt đầu nấu món' });
+  res.json({ ok: true, message: 'Đã bắt đầu nấu món và cập nhật tồn kho' });
 });
 
 // UC-34: Nhân viên bếp bấm "Xong" 1 món (Chuyển ra khâu đóng gói)
@@ -603,6 +662,7 @@ router.post('/kitchen/items/:itemId/ready', B, async (req, res) => {
 /**
  * Tự duyệt nếu chênh lệch <= ngưỡng (config %); nếu vượt → đẩy lên QL chuỗi (status=PENDING).
  */
+/* ===================== UC-30: Phiếu điều chỉnh tồn kho ===================== */
 router.post(
   '/inventory/adjust',
   B,
@@ -611,6 +671,7 @@ router.post(
     const { checkAndEmitLowStockAlerts } = require('../services/inventoryService');
     const bid = req.user.branch_id;
     const { reason, lines } = req.body;
+    
     if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ error: 'Thiếu dòng điều chỉnh' });
     const thresholdPct = await getNumberConfig('inventory_adjust_auto_threshold_pct', 5);
 
@@ -619,6 +680,7 @@ router.post(
       await conn.beginTransaction();
       let exceeds = false;
       const enriched = [];
+      
       for (const l of lines) {
         const [[bi]] = await conn.execute(
           'SELECT quantity FROM branch_inventory WHERE branch_id = ? AND ingredient_id = ? FOR UPDATE',
@@ -631,18 +693,21 @@ router.post(
         if (pct > thresholdPct) exceeds = true;
         enriched.push({ ingredient_id: l.ingredient_id, qty_before: before, qty_after: after, delta });
       }
+      
       const status = exceeds ? 'PENDING' : 'AUTO_APPROVED';
       const [ins] = await conn.execute(
         `INSERT INTO inventory_adjustments (branch_id, status, reason, created_by) VALUES (?,?,?,?)`,
         [bid, status, reason || null, req.user.id]
       );
       const adjId = ins.insertId;
+      
       for (const e of enriched) {
         await conn.execute(
           `INSERT INTO inventory_adjustment_lines (adjustment_id, ingredient_id, qty_before, qty_after, delta) VALUES (?,?,?,?,?)`,
           [adjId, e.ingredient_id, e.qty_before, e.qty_after, e.delta]
         );
       }
+      
       // Áp dụng ngay nếu auto-approve
       if (status === 'AUTO_APPROVED') {
         for (const e of enriched) {
@@ -652,12 +717,20 @@ router.post(
           );
         }
       }
+
+      // --- 1. CHỐT GIAO DỊCH TRƯỚC ĐỂ LƯU TỒN KHO MỚI VÀO CSDL ---
       await conn.commit();
+
+      // --- 2. SAU KHI ĐÃ CHỐT MỚI GỌI CÁC HÀM PHỤ TRỢ KIỂM TRA MÓN VÀ CẢNH BÁO ---
       if (status === 'AUTO_APPROVED') {
-        await checkAndEmitLowStockAlerts('BRANCH', bid, enriched.map(e => e.ingredient_id));
+        const adjustedIngredientIds = enriched.map(e => e.ingredient_id);
+        await triggerMenuUpdateByIngredients(bid, adjustedIngredientIds);
+        await checkAndEmitLowStockAlerts('BRANCH', bid, adjustedIngredientIds);
       }
+
       await logAudit(req.user.id, 'INV_ADJUST_CREATE', 'branch', { adjId, status, exceeds }, req.ip);
       res.json({ id: adjId, status, message: exceeds ? 'Chênh lệch vượt ngưỡng — đã gửi QL chuỗi duyệt' : 'Đã tự duyệt và áp dụng' });
+      
     } catch (e) {
       await conn.rollback();
       throw e;
@@ -910,7 +983,6 @@ router.get('/outbounds/:id', B, async (req, res) => {
 // UC-30: Nhận hàng có kiểm đếm thực tế (Bản có kèm Ghi chú/Phản hồi)
 router.post('/outbounds/:id/receive', B, asyncHandler(async (req, res) => {
   const bid = req.user.branch_id;
-  // Bổ sung nhận thêm trường 'note' từ Frontend
   const { received_lines, note } = req.body; 
   const conn = await pool.getConnection();
   
@@ -954,7 +1026,7 @@ router.post('/outbounds/:id/receive', B, asyncHandler(async (req, res) => {
     await conn.execute(`UPDATE stock_outbounds SET status = 'DELIVERED' WHERE id = ?`, [ob.id]);
     await conn.execute(`UPDATE stock_requests SET status = 'COMPLETED' WHERE id = ?`, [ob.request_id]);
 
-    // LƯU GHI CHÚ PHẢN HỒI VÀO AUDIT LOG
+    // LƯU GHI CHÚ PHẢN HỒI VÀO AUDIT LOG TRONG GIAO DỊCH
     if (hasDiscrepancy) {
       await logAudit(req.user.id, 'RECEIVE_DISCREPANCY', 'branch', 
         { outbound_id: ob.id, note: note || 'Nhận thiếu/thừa hàng', details: discrepancies }, req.ip);
@@ -963,7 +1035,13 @@ router.post('/outbounds/:id/receive', B, asyncHandler(async (req, res) => {
         { outbound_id: ob.id, note: note || 'Nhận đủ hàng' }, req.ip);
     }
 
+    // --- 1. CHỐT GIAO DỊCH ĐỂ LƯU TỒN KHO MỚI VÀO CSDL ---
     await conn.commit();
+
+    // --- 2. GỌI TRIGGER CẬP NHẬT MÓN SAU KHI ĐÃ CÓ TỒN KHO THỰC TẾ ---
+    const receivedIngredientIds = received_lines.map(l => l.ingredient_id);
+    await triggerMenuUpdateByIngredients(bid, receivedIngredientIds);
+
     res.json({ ok: true, has_discrepancy: hasDiscrepancy });
 
   } catch (e) {

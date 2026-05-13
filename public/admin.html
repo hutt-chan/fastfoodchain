@@ -53,8 +53,8 @@
         <div><label for="nb_rad">Bán kính giao (km)</label><input id="nb_rad" type="number" value="5" /></div>
         <div><label for="nb_open">Giờ mở cửa</label><input id="nb_open" type="time" value="08:00" /></div>
         <div><label for="nb_close">Giờ đóng cửa</label><input id="nb_close" type="time" value="22:00" /></div>
-        <div><label for="eb_open">Giờ mở cửa</label><input id="eb_open" type="time" /></div>
-        <div><label for="eb_close">Giờ đóng cửa</label><input id="eb_close" type="time" /></div>
+        <!-- <div><label for="eb_open">Giờ mở cửa</label><input id="eb_open" type="time" /></div> -->
+        <!-- <div><label for="eb_close">Giờ đóng cửa</label><input id="eb_close" type="time" /></div> -->
       </div>
       <div class="row-actions"><button id="addBranch">+ Tạo chi nhánh</button></div>
     </div>
@@ -70,6 +70,9 @@
       <div><label for="eb_lat">Vĩ độ</label><input id="eb_lat" type="number" step="0.0000001" /></div>
       <div><label for="eb_lng">Kinh độ</label><input id="eb_lng" type="number" step="0.0000001" /></div>
       <div><label for="eb_rad">Bán kính giao (km)</label><input id="eb_rad" type="number" step="0.1" /></div>
+
+      <div><label for="eb_open">Giờ mở cửa</label><input id="eb_open" type="time" /></div>
+      <div><label for="eb_close">Giờ đóng cửa</label><input id="eb_close" type="time" /></div>
     </div>
     
       <div class="row-actions"><button id="saveBranchBtn">💾 Lưu thay đổi</button></div>
@@ -511,6 +514,8 @@ function openEditBranchModal(branch) {
   document.getElementById('eb_lat').value = branch.lat || '';
   document.getElementById('eb_lng').value = branch.lng || '';
   document.getElementById('eb_rad').value = branch.delivery_radius_km || '';
+  document.getElementById('eb_open').value = branch.open_time || '';
+  document.getElementById('eb_close').value = branch.close_time || '';
 
   // 2. Hiện Card sửa và cuộn màn hình tới đó cho dễ nhìn
   const editCard = document.getElementById('editBranchCard');
@@ -533,7 +538,10 @@ document.getElementById('saveBranchBtn').onclick = async () => {
     address: document.getElementById('eb_addr').value.trim(),
     lat: Number(document.getElementById('eb_lat').value) || null,
     lng: Number(document.getElementById('eb_lng').value) || null,
-    delivery_radius_km: Number(document.getElementById('eb_rad').value) || null
+    delivery_radius_km: Number(document.getElementById('eb_rad').value) || null,
+    // Thêm 2 dòng này
+    open_time: document.getElementById('eb_open').value || null,
+    close_time: document.getElementById('eb_close').value || null
   };
 
   try {
