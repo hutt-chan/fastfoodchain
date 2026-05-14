@@ -65,6 +65,17 @@ router.post('/purchase-orders/:id/receive', W, async (req, res) => {
 
     for (const l of lines || []) {
       if (!l.exp_date) throw new Error('Vui lòng nhập Hạn sử dụng cho tất cả nguyên liệu');
+
+            // ========== THÊM ĐOẠN NÀY ==========
+      // Kiểm tra hạn sử dụng không được ở quá khứ
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // chỉ so sánh ngày, bỏ qua giờ
+      const expDate = new Date(l.exp_date);
+      if (expDate < today) {
+        throw new Error(`Hạn sử dụng ${l.exp_date} đã qua, không thể nhập kho.`);
+      }
+      // ==================================
+      
       const qtyReceived = Number(l.qty_received);
       if (qtyReceived <= 0) continue;
 
@@ -211,6 +222,26 @@ router.post('/purchase-orders', W, async (req, res) => {
   }
 });
 
+
+// Lấy danh sách lô hàng của một nguyên liệu (còn tồn > 0, sắp xếp theo HSD tăng dần - FEFO)
+router.get('/ingredients/:id/batches', W, async (req, res) => {
+  const ingredientId = req.params.id;
+  try {
+    const [batches] = await pool.execute(
+      `SELECT cb.id, cb.quantity, cb.expiration_date, po.id AS po_id, po.created_at AS po_date,
+              s.name AS supplier_name
+       FROM central_inventory_batches cb
+       LEFT JOIN purchase_orders po ON po.id = cb.po_id
+       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       WHERE cb.ingredient_id = ? AND cb.quantity > 0
+       ORDER BY cb.expiration_date ASC`,
+      [ingredientId]
+    );
+    res.json({ batches });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.patch('/ingredients/:id/thresholds', W, async (req, res) => {
   const { safety_stock_min, reorder_point } = req.body;

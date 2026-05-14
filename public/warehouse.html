@@ -184,7 +184,7 @@ function renderInv() {
   if (filt === 'reord') list = list.filter(i => { const q = Number(i.quantity); return q >= Number(i.safety_stock_min) && q < Number(i.reorder_point); });
   
   document.getElementById('inv').innerHTML = list.length
-    ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn (ĐV sử dụng)</th><th>Tồn (ĐV nhập)</th><th>An toàn</th><th>Điểm đặt</th><th>Trạng thái</th></tr></thead><tbody>' +
+    ? '<div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn (ĐV sử dụng)</th><th>Tồn (ĐV nhập)</th><th>An toàn</th><th>Điểm đặt</th><th>Trạng thái / Lô hàng</th></tr></thead><tbody>' +
       list.map(i => {
         const q = Number(i.quantity);
         const rate = Number(i.conversion_rate) || 1;
@@ -200,16 +200,62 @@ function renderInv() {
         else if (q < Number(i.reorder_point)) badge = '<span class="badge warn">Cần đặt thêm</span>';
         else badge = '<span class="badge ok">Đủ</span>';
         
+        // ✅ SỬA: dùng i.ingredient_id thay vì i.id
+        const batchButton = `<button class="secondary" style="padding:0.2rem 0.4rem" onclick="viewBatches(${i.ingredient_id}, '${escapeHtml(i.name)}')">📦 Lô hàng</button>`;
+        
         return `<tr>
           <td><strong>${escapeHtml(i.name)}</strong></td>
           <td>${fmtNum(q)} <span class="tag">${escapeHtml(i.unit)}</span></td>
           <td style="color: var(--primary)"><strong>${fmtNum(purchaseQty)}</strong> <span class="tag">${escapeHtml(purchaseUnit)}</span></td>
           <td>${fmtNum(minPurchase)} <span class="tag">${escapeHtml(purchaseUnit)}</span></td>
           <td>${fmtNum(reordPurchase)} <span class="tag">${escapeHtml(purchaseUnit)}</span></td>
-          <td>${badge}</td>
+          <td>${badge} ${batchButton}</td>
         </tr>`;
       }).join('') + '</tbody></table></div>'
     : '<p class="empty"><span class="icon">🔍</span>Không có nguyên liệu phù hợp</p>';
+}
+
+async function viewBatches(ingredientId, ingredientName) {
+  try {
+    const { batches } = await api(`/warehouse/ingredients/${ingredientId}/batches`);
+    if (batches.length === 0) {
+      return alertModal(`Nguyên liệu "${ingredientName}" hiện không có lô hàng nào còn tồn.`);
+    }
+    
+    const rows = batches.map(b => {
+      const expDate = new Date(b.expiration_date).toLocaleDateString('vi-VN');
+      const today = new Date().setHours(0,0,0,0);
+      const exp = new Date(b.expiration_date).setHours(0,0,0,0);
+      let expClass = '';
+      if (exp < today) expClass = 'badge err';      // quá hạn
+      else if (exp - today <= 7*86400000) expClass = 'badge warn'; // sắp hết hạn (7 ngày)
+      else expClass = 'badge ok';
+      
+      return `<tr>
+        <td>${fmtNum(Math.floor(Number(b.quantity)))} ${ingredientName} (đơn vị nhập)</td>
+        <td class="${expClass}">${expDate}</td>
+        <td>${b.po_id ? `PO #${b.po_id}` : 'Không rõ'} ${b.supplier_name ? `- ${escapeHtml(b.supplier_name)}` : ''}</td>
+      </tr>`;
+    }).join('');
+    
+    showModal(`
+      <h3>📦 Lô hàng còn tồn: ${escapeHtml(ingredientName)}</h3>
+      <p class="tag" style="margin-bottom: 1rem;">Sắp xếp theo HSD tăng dần (gần hết hạn trước). Màu đỏ = quá hạn, vàng = sắp hết (≤7 ngày).</p>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Số lượng (ĐV nhập)</th><th>Hạn sử dụng</th><th>PO / Nhà cung cấp</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="row-actions" style="margin-top:1rem; justify-content:flex-end">
+        <button class="secondary" onclick="closeModal()">Đóng</button>
+      </div>
+    `);
+  } catch (e) {
+    alertModal(e.message);
+  }
 }
 
 async function loadInv() {
@@ -726,7 +772,7 @@ window.openRecvModal = async function(id) {
           <input type="number" data-line="${l.ingredient_id}" value="${remaining}" min="0" max="${remaining}" style="width:80px">
         </td>
         <td>
-          <input type="date" data-exp="${l.ingredient_id}" required title="Bắt buộc nhập Hạn sử dụng để quản lý FEFO">
+          <input type="date" data-exp="${l.ingredient_id}" required min="${new Date().toISOString().split('T')[0]}" title="Bắt buộc nhập Hạn sử dụng (không được chọn ngày đã qua)">
         </td>
       </tr>`;
     }).join('');
