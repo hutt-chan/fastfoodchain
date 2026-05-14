@@ -17,13 +17,13 @@
 <div class="layout">
   <div id="msg" aria-live="polite"></div>
   <div class="tabs">
-    <button class="active" data-tab="prod">Sản phẩm &amp; BOM</button>
-    <button data-tab="cat">Danh mục</button>
-    <button data-tab="ing">Nguyên liệu</button>
-    <button data-tab="vou">Voucher</button>
-    <button data-tab="rep">Báo cáo</button>
-    <button data-tab="rec">Đối soát</button>
-    <button data-tab="adj">Duyệt kho</button>
+    <button class="active" data-tab="prod">🍔 Sản phẩm &amp; BOM</button>
+    <button data-tab="cat">🗂️ Danh mục</button>
+    <button data-tab="ing">🥬 Nguyên liệu</button>
+    <button data-tab="vou">🎟️ Voucher</button>
+    <button data-tab="rep">📊 Báo cáo</button>
+    <button data-tab="rec">🔄 Đối soát</button>
+    <button data-tab="adj">📦 Duyệt kho</button>
   </div>
   <section id="tab-prod" class="tab-panel active">
     <div class="card">
@@ -35,7 +35,7 @@
       <div id="products"></div>
     </div>
     <div class="card">
-      <h3>+ Thêm sản phẩm mới (UC-15)</h3>
+      <h3>+ Thêm sản phẩm mới</h3>
       <div class="grid grid-2">
         <div><label for="np_cat">Danh mục</label><select id="np_cat"></select></div>
         <div><label for="np_name">Tên</label><input id="np_name" /></div>
@@ -47,7 +47,7 @@
       <div class="row-actions"><button id="addProd">Tạo sản phẩm</button></div>
     </div>
     <div class="card">
-      <h3>📦 BOM theo sản phẩm (UC-16)</h3>
+      <h3>📦 BOM theo sản phẩm</h3>
       <label for="bom_pid">Chọn sản phẩm</label>
       <select id="bom_pid"></select>
       <div id="bom"></div>
@@ -92,7 +92,7 @@
   </section>
   <section id="tab-vou" class="tab-panel">
     <div class="card">
-      <h2>🎟️ Voucher (UC-19)</h2>
+      <h2>🎟️ Voucher</h2>
       <div id="vouchers"></div>
       <h3>+ Thêm voucher</h3>
       <div class="grid grid-2">
@@ -111,7 +111,7 @@
   </section>
   <section id="tab-rep" class="tab-panel">
     <div class="card">
-      <h2>📊 Báo cáo phân tích tổng hợp (UC-19)</h2>
+      <h2>📊 Báo cáo phân tích tổng hợp</h2>
       
       <div class="grid grid-4" style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
         <div>
@@ -219,7 +219,7 @@
   </section>
   <section id="tab-adj" class="tab-panel">
     <div class="card">
-      <h2>📦 Phê duyệt kiểm kê chi nhánh (UC-30)</h2>
+      <h2>📦 Phê duyệt kiểm kê chi nhánh</h2>
       <p class="tag">Các phiếu kiểm kê có độ lệch vượt ngưỡng an toàn (>5%) sẽ được đẩy lên đây chờ duyệt.</p>
       <div id="adjList" style="margin-top: 1rem;"></div>
     </div>
@@ -862,7 +862,7 @@ async function loadAdjustments() {
           <td>${new Date(a.created_at).toLocaleString('vi-VN')}</td>
           <td><button class="secondary" onclick="reviewAdj(${a.id})" style="padding:0.25rem 0.55rem">Chi tiết & Duyệt</button></td>
         </tr>`).join('') + '</tbody></table></div>'
-      : '<p class="empty"><span class="icon">✅</span>Không có phiếu điều chỉnh nào đang chờ duyệt</p>';
+      : '<p class="empty"><span class="icon"></span>Không có phiếu điều chỉnh nào đang chờ duyệt</p>';
   } catch (e) {
     document.getElementById('adjList').innerHTML = '<div class="msg err">' + escapeHtml(e.message) + '</div>';
   }

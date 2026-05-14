@@ -31,7 +31,7 @@
   </div>
   <section id="tab-orders" class="tab-panel active">
     <div class="card">
-      <h2>📋 Đơn của chi nhánh (UC-27 → UC-29, UC-36)</h2>
+      <h2>📋 Đơn của chi nhánh</h2>
       <div class="filter-bar">
         <input id="orderSearch" placeholder="🔎 Tìm theo mã / khách" aria-label="Tìm đơn" />
         <select id="orderStatus"><option value="">Tất cả trạng thái</option></select>
@@ -41,7 +41,7 @@
   </section>
   <section id="tab-menu" class="tab-panel">
     <div class="card">
-      <h2>🍽️ Thực đơn — Tắt/Bật món (UC-31)</h2>
+      <h2>🍽️ Thực đơn — Tắt/Bật món</h2>
       <p class="tag">Khi tắt thủ công, món sẽ ẩn khỏi thực đơn của khách dù còn đủ nguyên liệu.</p>
       <div class="filter-bar">
         <input id="menuSearch" placeholder="🔎 Tìm món" aria-label="Tìm món" />
@@ -52,7 +52,7 @@
   <section id="tab-inv" class="tab-panel">
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center">
-        <h2>📦 Tồn kho chi nhánh (UC-30)</h2>
+        <h2>📦 Tồn kho chi nhánh</h2>
         <button class="secondary" onclick="openAdjustmentModal()">📝 Kiểm kê / Điều chỉnh</button>
       </div>
       <div class="filter-bar">
@@ -68,7 +68,7 @@
       <div id="incomingStock"></div>
     </div>
     <div class="card" style="margin-top:1.5rem">
-      <h2>📝 Tạo phiếu xin hàng kho tổng (UC-32)</h2>
+      <h2>📝 Tạo phiếu xin hàng kho tổng</h2>
       <div id="reqLines"><p class="tag">Bấm "+ Dòng" để thêm nguyên liệu cần xin.</p></div>
       <div class="row-actions">
         <button type="button" class="secondary" id="addLine">+ Dòng</button>
@@ -153,7 +153,7 @@
   </section>
   <section id="tab-staff" class="tab-panel">
     <div class="card">
-      <h2>👥 Nhân viên chi nhánh (UC-29)</h2>
+      <h2>👥 Nhân viên chi nhánh</h2>
       <div id="staffList"></div>
       
       <h3 style="margin-top: 2rem">+ Thêm nhân viên mới</h3>
@@ -753,11 +753,6 @@ window.markFailed = async function(id) {
     loadOrders(); loadDashboard();
   } catch (e) { alertModal(e.message); }
 };
-
-
-// =========================================================
-// UC-30: NHẬN HÀNG TỪ KHO TỔNG
-// =========================================================
 
 // =========================================================
 // UC-30: NHẬN HÀNG TỪ KHO TỔNG
